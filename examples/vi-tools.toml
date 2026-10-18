@@ -1,0 +1,38 @@
+# Example lvindex configuration. Put it in <project root>\.claude\vi-tools.toml.
+# Paths are relative to this file. Every key is optional except `src`; every section switches on an optional layer.
+# Without any vi-tools.toml the tools run zero-config on the single .lvproj they find (core layer only).
+
+name = "My Test Stand HMI"
+src = "../src"                          # folder with the .lvproj sources
+skip = ["external"]                     # vendored code, not scanned
+# cache = "../my-cache"                 # default: <project root>\.index
+hide = ['(^|[\\/])accessors[\\/]']      # VIs hidden in trees / unexported lists (regex on the file path)
+hide_calls = ['^(Clear Errors|Simple Error Handler|Get LV Class Name)\.vi$']   # callees hidden in trees and frames
+status_enum = "Success"                 # enum constants containing this item are listed as `status consts`
+
+[tags]                                  # string literals worth indexing, e.g. PLC symbols used by name
+label = "plc"
+literal = '\b(?:GVL|MAIN)_?\w*\.[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*'
+# symbol_port = "symbol"                # input of a role call that carries the literal
+
+[tags.roles]                            # regexes on the lowercase callee name; its symbol input gets the role
+read = ['^read symbol']
+write = ['^write symbol']
+wait = ['^onchange.*prepare']
+
+[messages]                              # a queued-message-handler library
+enqueue = ["Enqueue Message"]
+dequeue = ["Dequeue Message"]
+queue_ports = ["Message Queue"]
+message_ports = ["Message"]
+data_port = "Message Data"
+
+[actors]                                # message-loop classes: children of `base` with an `entry` VI
+base = "Loop"
+entry = "Core.vi"
+
+[plc]                                   # TwinCAT project for the `plc` / `drift` queries
+repo = "../PLC/MyPlc"
+ads_config = "../config/ADS"
+cmd_gvl = "GVL_Cmd"
+interface = ["GVL_Cmd.", "GVL_Status."]
