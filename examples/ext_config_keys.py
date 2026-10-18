@@ -4,13 +4,13 @@ Use it as a template. It shows the four hooks: COMMANDS, HELP, find(), overview(
 Typical case: VIs read settings / tags / channels by name ("Motor.Speed") from INI, JSON or XML files; this
 lists which names the VIs use, which the files declare, and the mismatches.
 
-vi-tools.toml:
+lvindex.toml:
   [tags]
   literal = '\b(?:Motor|Valve)\.[A-Za-z_]\w*'          # the names the VIs hold as string constants
 
   [extensions.keys]
-  file = "ext_config_keys.py"                     # this file, relative to vi-tools.toml
-  files = ["../config/*.ini"]                     # glob patterns, relative to vi-tools.toml
+  file = "ext_config_keys.py"                     # this file, relative to lvindex.toml
+  files = ["../config/*.ini"]                     # glob patterns, relative to lvindex.toml
   key = '^\s*([A-Za-z_]\w*\.[A-Za-z_]\w*)\s*='       # regex per line, group 1 = a declared name
 """
 import glob

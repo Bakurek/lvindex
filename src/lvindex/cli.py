@@ -8,8 +8,8 @@ def main(argv=None):
     if "--project" in argv:                      # before the configuration is loaded (cache.py loads it on import)
         i = argv.index("--project")
         if i + 1 >= len(argv):
-            sys.exit("--project needs a folder or a vi-tools.toml")
-        os.environ["VI_PROJECT"] = os.path.abspath(argv[i + 1])
+            sys.exit("--project needs a folder or an lvindex.toml")
+        os.environ["LVINDEX_PROJECT"] = os.path.abspath(argv[i + 1])
         del argv[i:i + 2]
     from . import cache
     cache.main(argv)

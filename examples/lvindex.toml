@@ -1,6 +1,6 @@
-# Example lvindex configuration. Put it in <project root>\.claude\vi-tools.toml.
+# Example lvindex configuration. Put it in <project root>\.claude\lvindex.toml.
 # Paths are relative to this file. Every key is optional except `src`; every section switches on an optional layer.
-# Without any vi-tools.toml the tools run zero-config on the single .lvproj they find (core layer only).
+# Without any lvindex.toml the tools run zero-config on the single .lvproj they find (core layer only).
 
 name = "My Test Stand HMI"
 src = "../src"                          # folder with the .lvproj sources

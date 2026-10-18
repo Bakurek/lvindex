@@ -1,4 +1,4 @@
-"""Project-specific extensions: Python modules listed as [extensions.<name>] in vi-tools.toml (see EXTENSIONS.md).
+"""Project-specific extensions: Python modules listed as [extensions.<name>] in lvindex.toml (see EXTENSIONS.md).
 
 An extension module may define (all optional):
   COMMANDS = {"cmd": (fn, min_args, max_args)}   fn(pos, opts) - new commands; core command names cannot be replaced
@@ -8,9 +8,9 @@ An extension module may define (all optional):
   overview(api) -> [lines]                       extra lines (sections) printed by `overview`
 `api` gives the extension its settings and read access to the index (attributes below).
 
-Trust: an extension is code from the project folder. It is loaded only when vi-tools.toml lists it AND that
-vi-tools.toml was trusted once with `lvindex trust` (list kept per user, outside every project:
-%LOCALAPPDATA%\\lvindex\\trusted.json). A cloned project that ships its own vi-tools.toml and extension therefore
+Trust: an extension is code from the project folder. It is loaded only when lvindex.toml lists it AND that
+lvindex.toml was trusted once with `lvindex trust` (list kept per user, outside every project:
+%LOCALAPPDATA%\\lvindex\\trusted.json). A cloned project that ships its own lvindex.toml and extension therefore
 runs nothing until you trust it; zero-config never loads extensions.
 A failing extension prints a warning and is skipped; the core commands keep working.
 """
@@ -40,9 +40,9 @@ def trusted():
 
 
 def trust(cfg, remove=False):
-    """`lvindex trust [--remove]`: allow (or stop allowing) the extensions of the current vi-tools.toml."""
+    """`lvindex trust [--remove]`: allow (or stop allowing) the extensions of the current lvindex.toml."""
     if not cfg.get("file"):
-        sys.exit("zero-config project: there is no vi-tools.toml whose extensions could be trusted")
+        sys.exit("zero-config project: there is no lvindex.toml whose extensions could be trusted")
     t, k = trusted(), _key(cfg["file"])
     t = t - {k} if remove else t | {k}
     os.makedirs(os.path.dirname(TRUST), exist_ok=True)
@@ -67,7 +67,7 @@ class Api:
         self._cm = None
 
     def path(self, p):
-        """A path from the extension's settings, relative to the vi-tools.toml folder."""
+        """A path from the extension's settings, relative to the lvindex.toml folder."""
         return os.path.normpath(os.path.join(self.project["dir"], p)) if p else ""
 
     def skel(self):
@@ -105,10 +105,10 @@ def _warn_once(key, msg):
 
 
 def load(cfg):
-    """{name: module} of the configured extensions (loaded once per process, only for a trusted vi-tools.toml)."""
+    """{name: module} of the configured extensions (loaded once per process, only for a trusted lvindex.toml)."""
     ext = cfg.get("extensions", {})
     if ext and _key(cfg["file"]) not in trusted():
-        _warn_once("trust", f"extensions {', '.join(ext)} of {cfg['file']} not loaded: this vi-tools.toml is not "
+        _warn_once("trust", f"extensions {', '.join(ext)} of {cfg['file']} not loaded: this lvindex.toml is not "
                             "trusted - run `lvindex trust` once if you trust the project's code")
         return {}
     for name, sec in ext.items():

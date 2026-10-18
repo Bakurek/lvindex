@@ -3,7 +3,7 @@
 card = {v, vi, in, out, calls, tags: {read, write, wait, case, used, dyn}, sends, handles,
         events: {gen, reg, handled}, results, dynamic}
 Generic parts (always): terminals, calls, Call Parent Method, user events, Event Structure frames, frame consts.
-Project parts (configure(cfg) with the vi-tools.toml sections; absent section = empty field):
+Project parts (configure(cfg) with the lvindex.toml sections; absent section = empty field):
   tags     [tags]: string literals matching tags.literal with a role (read / write / wait from tags.roles regexes
            on the callee name, case = only branched on, used = anything else); dyn = role calls whose symbol input
            is not a string constant (comes from data at run time)

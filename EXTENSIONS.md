@@ -3,7 +3,7 @@
 lvindex knows only what every LabVIEW project has: VIs, calls, classes, typedefs, string literals, and the facts
 in exported VIs. Anything specific to one project stays outside lvindex: a PLC, a protocol, a driver, a config-file
 format, a naming convention. Such things go into an **extension**, a single Python file kept in the project itself
-(next to its `vi-tools.toml`), never in the lvindex repository.
+(next to its `lvindex.toml`), never in the lvindex repository.
 
 ## When to write one
 
@@ -32,10 +32,10 @@ Do not write one when:
    has nothing to compare against.
 3. **Write the extension** from the template below or from [examples/ext_config_keys.py](examples/ext_config_keys.py).
    Keep the parser of the counterpart small and close to the syntax you saw in step 1.
-4. **Register it** in the project's `vi-tools.toml`:
+4. **Register it** in the project's `lvindex.toml`:
    ```toml
    [extensions.plc]
-   file = "lvindex_plc.py"        # relative to vi-tools.toml
+   file = "lvindex_plc.py"        # relative to lvindex.toml
    repo = "../PLC/MyPlc"          # any further keys are the extension's own settings
    ```
    Then run `lvindex trust` once in the project. Until then the extension is not loaded, and lvindex says so.
@@ -70,7 +70,7 @@ The `api` object:
 | Attribute | Gives |
 |---|---|
 | `api.config` | the extension's keys from `[extensions.<name>]` (without `file`) |
-| `api.path(p)` | a settings path resolved relative to the `vi-tools.toml` folder |
+| `api.path(p)` | a settings path resolved relative to the `lvindex.toml` folder |
 | `api.project` | the whole project configuration (`src`, `cache`, `tags`, ...) |
 | `api.literals()` | `{literal: [VI qnames]}`: tagged literals from the binaries, no export needed |
 | `api.cards()` | `{qname: (card, stale)}`: facts of exported VIs; ignore a card when `stale` is true |
@@ -89,10 +89,10 @@ The `api` object:
   and leave out what the core already prints.
 - **Fail soft.** A missing folder or file means empty data and a one-line note, not a traceback. The loader catches
   exceptions anyway: a broken extension prints a warning, and the core keeps working.
-- **No auto-loading.** An extension is code from the project folder. It runs only when `vi-tools.toml` lists it
-  **and** that `vi-tools.toml` was trusted with `lvindex trust`. The list is kept per user in
+- **No auto-loading.** An extension is code from the project folder. It runs only when `lvindex.toml` lists it
+  **and** that `lvindex.toml` was trusted with `lvindex trust`. The list is kept per user in
   `%LOCALAPPDATA%\lvindex\trusted.json`, outside every project; `lvindex trust --remove` takes a project off it.
-  A cloned project that ships its own `vi-tools.toml` and extension runs nothing until you trust it. Zero-config
+  A cloned project that ships its own `lvindex.toml` and extension runs nothing until you trust it. Zero-config
   never loads extensions. An assistant must not run `lvindex trust` for a project the user did not ask it to
   trust: ask first, and read the extension file before trusting it.
 

@@ -521,7 +521,7 @@ def owner(sk, vi_q, queue, launch):
 
 def msgs(p, o):
     if K.MSG is None:
-        print("no message library configured ([messages] in vi-tools.toml) - use card <vi> --frames for handlers")
+        print("no message library configured ([messages] in lvindex.toml) - use card <vi> --frames for handlers")
         return
     sk = V.skel()
     cm = V.card_map(sk)
@@ -651,7 +651,7 @@ def overview(p, o):
     st = sk["stats"]
     vend = sorted({v["file"].split(os.sep)[0] for v in sk["vis"].values()} & {"external", "vendor", "3rdparty", "dependencies"})
     if vend and not CFG["skip"]:
-        print(f"## Note: folders {', '.join(vend)} are scanned; if they hold vendored code set skip = [...] in vi-tools.toml")
+        print(f"## Note: folders {', '.join(vend)} are scanned; if they hold vendored code set skip = [...] in lvindex.toml")
     print(f"## Coverage: {cur} current cards of {len(sk['vis'])} VIs; same-name VIs kept by path {len(st['dups'])}; "
           f"skipped folders: {', '.join(st.get('skipped', [])) or '-'}")
     print("## Next: ctx <vi> | card <vi> --frames | find <term> | callers <vi> | unexported"

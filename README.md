@@ -49,24 +49,24 @@ or a unique substring of one.
 ## Project and configuration
 
 The project is found from the current folder, in this order:
-1. `--project <folder | vi-tools.toml>`
-2. `.claude\vi-tools.toml`, walking up from the current folder
+1. `--project <folder | lvindex.toml>`
+2. `.claude\lvindex.toml`, walking up from the current folder
 3. the outermost folder with a single `.lvproj` (zero-config)
 
 Outside a project the tools stop with an error.
 
 Zero-config runs the core only: skeleton, cache and cards. Optional layers are switched on by sections of
-`vi-tools.toml`:
+`lvindex.toml`:
 - `[tags]`: indexed literals and their read / write / wait roles;
 - `[messages]`: your queued-message library;
 - `[actors]`: message-loop classes and the names of their queue accessors.
 
-See [examples/vi-tools.toml](examples/vi-tools.toml) and the docstring of `src/lvindex/config.py`.
+See [examples/lvindex.toml](examples/lvindex.toml) and the docstring of `src/lvindex/config.py`.
 
 ## Extensions
 
 Anything specific to one project, such as a PLC, a protocol, a driver or a config-file format, belongs in an
-**extension**: one Python file kept in the project next to its `vi-tools.toml` and listed there as
+**extension**: one Python file kept in the project next to its `lvindex.toml` and listed there as
 `[extensions.<name>]`. An extension adds commands and extra lines to `find` and `overview`, and reads the index
 through a small API. It is loaded only when listed and after you run `lvindex trust` once in that project
 (a cloned project cannot run its own code on you); never in zero-config. [EXTENSIONS.md](EXTENSIONS.md) explains

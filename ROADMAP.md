@@ -1,10 +1,10 @@
 # Design notes and roadmap
 
 ## Design decisions
-- **Project discovery** (config.py): `--project` / `VI_PROJECT`, then `.claude\vi-tools.toml` walking up from the
+- **Project discovery** (config.py): `--project` / `LVINDEX_PROJECT`, then `.claude\lvindex.toml` walking up from the
   current folder, then the outermost folder with a single `.lvproj` (zero-config, announced on stderr). Nothing found
   = error; the tools never fall back to a project they happen to be stored in.
-- **Cache** per project in `<project root>\.index` (a new folder gets `.gitignore` = `*`); `cache` in vi-tools.toml
+- **Cache** per project in `<project root>\.index` (a new folder gets `.gitignore` = `*`); `cache` in lvindex.toml
   overrides it. index.json stores export names relative to `xml\`, so the folder can be moved.
 - **Config hash**: only `skip` and `tags.literal` invalidate the skeleton; the card signature covers the card-related
   settings, so cards are rebuilt from the stored XML when they change.
@@ -12,7 +12,7 @@
   dequeue VIs, ports), `[actors]` (base class, entry VI, queue accessor names), `status_enum`, `hide`, `hide_calls`,
   `skip`.
 - **Extensions** for anything project-specific (PLC, protocols, config formats): one file in the project, listed in
-  vi-tools.toml, loaded only then; hooks `COMMANDS`, `find`, `overview`, `HELP`; failures are isolated
+  lvindex.toml, loaded only then; hooks `COMMANDS`, `find`, `overview`, `HELP`; failures are isolated
   (EXTENSIONS.md). The core contains no PLC / protocol / driver knowledge.
 - **Skeleton naming**: owner = innermost class / library; name collisions are resolved (`Name [Lib]`, `Name.lvlib`,
   relative-path VI keys) instead of dropping VIs; owners are resolved by candidates (the caller's library chain, the

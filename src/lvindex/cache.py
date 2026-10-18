@@ -1,8 +1,8 @@
 """lvindex - VI review cache + logic index for a LabVIEW project. Run: lvindex [--project P] <command> ...
 (without installing: python -I <repo>\\lvindex.py ...)
 
-Project: found from the current folder (.claude\\vi-tools.toml, else a single *.lvproj = zero-config) or --project
-<folder | vi-tools.toml>; see config.py. Optional layers (tags, messages, actors) and project extensions
+Project: found from the current folder (.claude\\lvindex.toml, else a single *.lvproj = zero-config) or --project
+<folder | lvindex.toml>; see config.py. Optional layers (tags, messages, actors) and project extensions
 (EXTENSIONS.md) exist only when configured.
 <vi> anywhere = a file path, "Class:File.vi", or a unique substring of a qualified name.
 
@@ -41,8 +41,8 @@ Limits: roles, messages and events exist only for exported VIs; names built at r
   VIs called by reference or by name have no callers; .llb / .lvlibp contents are not read.
 
 Maintenance: ackdeps <vi>... | show <vi> | semdiff <a.xml> <b.xml> | skeleton [--full] | repair | recard | list
-Extensions: trust [--remove] allows the [extensions] of this vi-tools.toml to run (once per project and user)
-Store: the project's cache folder (default <project root>\\.index, vi-tools.toml `cache` overrides):
+Extensions: trust [--remove] allows the [extensions] of this lvindex.toml to run (once per project and user)
+Store: the project's cache folder (default <project root>\\.index, lvindex.toml `cache` overrides):
   index.json (export names relative to xml\\), xml\\, skeleton.json, index.lock (held while index.json is
   modified), .gitignore (`*`, written when the folder is created).
 """

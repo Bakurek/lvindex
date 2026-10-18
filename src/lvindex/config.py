@@ -1,20 +1,21 @@
 """Project configuration of lvindex: which LabVIEW project, where its cache lives, optional layers, extensions.
 
 Discovery (first hit wins):
-  1. env VI_PROJECT (set by `--project <path>`): a vi-tools.toml file, or a folder with .claude\\vi-tools.toml,
-     vi-tools.toml or a single *.lvproj (also in its src\\ subfolder)
-  2. walking up from the current folder: .claude\\vi-tools.toml
+  1. env LVINDEX_PROJECT (set by `--project <path>`): a .toml file, or a folder with .claude\\lvindex.toml,
+     lvindex.toml or a single *.lvproj (also in its src\\ subfolder)
+  2. walking up from the current folder: .claude\\lvindex.toml (or lvindex.toml)
+  The old name vi-tools.toml (and env VI_PROJECT) is still accepted, with a warning.
   3. walking up from the current folder: the OUTERMOST folder (or its src\\) with exactly one *.lvproj
      -> zero-config (a nested example / sub-project .lvproj does not win); announced on stderr
   Nothing found = error: the tools never fall back to a project they happen to be stored in.
 Zero-config = core only (skeleton, cache, cards with calls / events / frames); every optional layer is off.
 
-vi-tools.toml (paths relative to the file; every key optional except src):
+lvindex.toml (paths relative to the file; every key optional except src):
   name = "My App"                        project name in outputs
   src = "../src"                         folder with the .lvproj sources
   skip = ["external"]                    folder names not scanned (vendored code)
   cache = "../cache"                     default: <project root>\\.index (root = the folder above .claude\\ /
-                                         src\\, or of the vi-tools.toml / .lvproj); a new folder gets .gitignore `*`
+                                         src\\, or of the lvindex.toml / .lvproj); a new folder gets .gitignore `*`
   hide = ['(^|[\\\\/])accessors[\\\\/]']        regexes on the file path of VIs hidden in trees / unexported lists
   hide_calls = ['^Clear Errors\\.vi$']    regexes on callee names hidden in trees and frame cards
   status_enum = "Success"               enum constants containing this item are listed as `status consts`
@@ -41,6 +42,8 @@ import os
 import sys
 import tomllib
 
+NAME = "lvindex.toml"
+LEGACY = "vi-tools.toml"                          # name before 2026-10-18, still found (with a warning)
 KNOWN = {"name", "src", "skip", "cache", "hide", "hide_calls", "status_enum", "tags", "messages", "actors",
          "extensions"}
 DEFAULT_HIDE = [r"(^|[\\/])accessors[\\/]"]
@@ -69,9 +72,12 @@ def _outermost(start, fn):
 
 
 def _toml_in(d):
-    for p in (os.path.join(d, ".claude", "vi-tools.toml"), os.path.join(d, "vi-tools.toml")):
-        if os.path.isfile(p):
-            return p
+    for name in (NAME, LEGACY):
+        for p in (os.path.join(d, ".claude", name), os.path.join(d, name)):
+            if os.path.isfile(p):
+                if name == LEGACY:
+                    print(f"WARNING: {p}: the old name {LEGACY} still works, rename it to {NAME}", file=sys.stderr)
+                return p
     return None
 
 
@@ -89,7 +95,10 @@ def _walk_up(start, fn):
 
 def discover():
     """(kind, path): kind 'toml' or 'lvproj'."""
-    env = os.environ.get("VI_PROJECT")
+    env = os.environ.get("LVINDEX_PROJECT")
+    if not env and os.environ.get("VI_PROJECT"):
+        env = os.environ["VI_PROJECT"]
+        print("WARNING: env VI_PROJECT is the old name, use LVINDEX_PROJECT", file=sys.stderr)
     if env:
         if os.path.isfile(env):
             return ("toml", env) if env.lower().endswith(".toml") else ("lvproj", env)
@@ -99,7 +108,7 @@ def discover():
         hit = _lvprojs(env)
         if hit:
             return "lvproj", hit
-        sys.exit(f"VI_PROJECT={env}: no vi-tools.toml and no single .lvproj there")
+        sys.exit(f"LVINDEX_PROJECT={env}: no {NAME} and no single .lvproj there")
     hit = _walk_up(os.getcwd(), _toml_in)
     if hit:
         return "toml", hit
@@ -108,11 +117,11 @@ def discover():
         print(f"(project: zero-config from {hit})", file=sys.stderr)
         return "lvproj", hit
     sys.exit(f"no LabVIEW project found from {os.getcwd()}: run from inside a project, or pass "
-             "--project <folder|vi-tools.toml>")
+             f"--project <folder|{NAME}>")
 
 
 def _root(kind, path):
-    """Project root folder: above .claude\\ for a vi-tools.toml there, above src\\ for an .lvproj there,
+    """Project root folder: above .claude\\ for an lvindex.toml there, above src\\ for an .lvproj there,
     otherwise the folder of the file."""
     d = os.path.dirname(os.path.abspath(path))
     up = ".claude" if kind == "toml" else "src"
