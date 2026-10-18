@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lvindex"
+dynamic = ["version"]
+description = "Offline index and review cache for LabVIEW projects"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = []
+classifiers = ["Operating System :: Microsoft :: Windows", "Programming Language :: Python :: 3"]
+
+[project.urls]
+Repository = "https://github.com/Bakurek/lvindex"
+
+[project.scripts]
+lvindex = "lvindex.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "lvindex.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]

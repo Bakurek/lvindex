@@ -30,9 +30,11 @@ data_port = "Message Data"
 [actors]                                # message-loop classes: children of `base` with an `entry` VI
 base = "Loop"
 entry = "Core.vi"
+self_queue = "Self-Queue"               # queue accessor names of your framework (each optional)
+caller_queue = "Caller-Queue"
+named_queue = '(.+) Queue$'             # group 1 = name of the owning actor
 
-[plc]                                   # TwinCAT project for the `plc` / `drift` queries
-repo = "../PLC/MyPlc"
-ads_config = "../config/ADS"
-cmd_gvl = "GVL_Cmd"
-interface = ["GVL_Cmd.", "GVL_Status."]
+[extensions.keys]                       # project-specific extension, see EXTENSIONS.md
+file = "ext_config_keys.py"             # relative to this file; loaded only because it is listed here
+files = ["../config/*.ini"]             # the extension's own settings
+key = '^\s*([A-Za-z_]\w*\.[A-Za-z_]\w*)\s*='

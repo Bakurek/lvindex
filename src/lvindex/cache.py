@@ -1,7 +1,9 @@
-"""VI review cache + logic index for a LabVIEW project. Run: python -I vi_cache.py [--project P] <command> ...
+"""lvindex - VI review cache + logic index for a LabVIEW project. Run: lvindex [--project P] <command> ...
+(without installing: python -I <repo>\\lvindex.py ...)
 
 Project: found from the current folder (.claude\\vi-tools.toml, else a single *.lvproj = zero-config) or --project
-<folder | vi-tools.toml>; see vi_config.py. Optional layers (tags, messages, actors, plc) exist only when configured.
+<folder | vi-tools.toml>; see config.py. Optional layers (tags, messages, actors) and project extensions
+(EXTENSIONS.md) exist only when configured.
 <vi> anywhere = a file path, "Class:File.vi", or a unique substring of a qualified name.
 
 Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memory, check looks at disk):
@@ -23,7 +25,7 @@ Understanding the program (skeleton = all VIs from the binary files, no export; 
                         dispatcher cases + Event Structure frames, callee card state); --frame also prints the callee
                         cards (one hop); --xml = XML of that frame only. Nested cases are flattened into the frame
   find <term> [-s] [-n N]   matched items: tagged literals (role from the card, "sym?" = role unknown), messages
-                        and events (cards), calls, [plc] declarations; -s also VIs that match only by a string
+                        and events (cards), calls, extension hits; -s also VIs that match only by a string
   callers <vi> [-n N]   dispatch expanded: DyOM on a wire of class W runs W's nearest implementation or an override
                         in a descendant / implementer of W; CPM = Call Parent Method; VIM? = malleable VI (heuristic)
   calls <vi> [-d N] [--all]   callees as a tree (hidden plumbing shown with --all)
@@ -31,7 +33,6 @@ Understanding the program (skeleton = all VIs from the binary files, no export; 
   class <name> [--all]  superclass / external parent, interfaces, children, overrides, typedefs, methods
   unexported [filter] [--all] [-n N]   VIs without a current card, with file size
   msgs [name]           [messages]: senders -> queue owner -> handler (cards only; gaps printed as such)
-  plc <term> | drift    [plc]: TwinCAT declarations / POUs / ADS config for a symbol; HMI symbols the PLC lacks
 Markers: "(no card)" never exported, "(card stale)" VI saved after its export - card not used,
   "(not in lvclass)" file in a class folder but not a member (stray copy or dead code).
 Call kinds: IUVI static, DyOM dynamic dispatch, CPM Call Parent Method, PUPV polymorphic, SVVI static VI reference,
@@ -40,6 +41,7 @@ Limits: roles, messages and events exist only for exported VIs; names built at r
   VIs called by reference or by name have no callers; .llb / .lvlibp contents are not read.
 
 Maintenance: ackdeps <vi>... | show <vi> | semdiff <a.xml> <b.xml> | skeleton [--full] | repair | recard | list
+Extensions: trust [--remove] allows the [extensions] of this vi-tools.toml to run (once per project and user)
 Store: the project's cache folder (default <project root>\\.index, vi-tools.toml `cache` overrides):
   index.json (export names relative to xml\\), xml\\, skeleton.json, index.lock (held while index.json is
   modified), .gitignore (`*`, written when the folder is created).
@@ -53,19 +55,12 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-if "--project" in sys.argv:                      # before the configuration is loaded below
-    _i = sys.argv.index("--project")
-    if _i + 1 >= len(sys.argv):
-        sys.exit("--project needs a folder or a vi-tools.toml")
-    os.environ["VI_PROJECT"] = os.path.abspath(sys.argv[_i + 1])
-    del sys.argv[_i:_i + 2]
-import vi_cards as K  # noqa: E402
-import vi_config  # noqa: E402
-import vi_skeleton as S  # noqa: E402
-from vi_cards import fmt, make_card  # noqa: E402
+from . import cards as K
+from . import config
+from . import skeleton as S
+from .cards import make_card
 
-CFG = vi_config.get()
+CFG = config.get()
 K.configure(CFG)
 
 ROOT = CFG["cache"]
@@ -177,7 +172,7 @@ def meta(vi):
 
 
 def fresh(idx):
-    """Rebuild cards made by an older vi_cards.py (CARD_V differs); returns the current index."""
+    """Rebuild cards made by an older cards.py (CARD_V differs); returns the current index."""
     if not any(e.get("card") and e["card"].get("v") != K.CARD_V for e in idx.values()):
         return idx
     with locked():
@@ -438,8 +433,8 @@ def check(vis):
 
 
 def self_check(sk, q, xml_path):
-    """Compare the export with the saved file (skeleton): calls and PLC symbol literals. A mismatch means the export
-    came from unsaved edits in LabVIEW memory, or a binary heuristic of vi_skeleton.py broke."""
+    """Compare the export with the saved file (skeleton): calls and tagged literals. A mismatch means the export
+    came from unsaved edits in LabVIEW memory, or a binary heuristic of skeleton.py broke."""
     if q is None:
         return "SELF-CHECK skipped (VI outside the skeleton)"
     root = ET.parse(xml_path).getroot()
@@ -638,11 +633,12 @@ def listing():
 
 # ---------------------------------------------------------------- CLI
 FLAGS_WITH_VALUE = {"-n", "-d", "--frame", "--xml"}
-FLAGS = {"-s", "--all", "--frames", "--full"}
+FLAGS = {"-s", "--all", "--frames", "--full", "--remove"}
 
 
 def main(argv):
-    import vi_query as Q
+    from . import ext as E
+    from . import query as Q
     with contextlib.suppress(AttributeError, ValueError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     cmds = {"check": (lambda p, o: check(p), 1, 999), "update": (lambda p, o: update(*p), 2, 2),
@@ -650,9 +646,13 @@ def main(argv):
             "show": (lambda p, o: show(*p), 1, 1), "semdiff": (lambda p, o: print(semdiff(*p)), 2, 2),
             "skeleton": (lambda p, o: skeleton("--full" if o.get("--full") else ""), 0, 0),
             "repair": (lambda p, o: repair(), 0, 0), "recard": (lambda p, o: recard(), 0, 0),
-            "list": (lambda p, o: listing(), 0, 0), **Q.COMMANDS}
+            "list": (lambda p, o: listing(), 0, 0),
+            "trust": (lambda p, o: E.trust(CFG, remove=bool(o.get("--remove"))), 0, 0), **Q.COMMANDS}
+    if argv[1:2] != ["trust"]:                    # trust must not load (and warn about) the code it is asked about
+        cmds.update(E.commands(CFG, cmds))
     if len(argv) < 2 or argv[1] not in cmds:
-        sys.exit(__doc__)
+        h = E.help_text(CFG)
+        sys.exit(__doc__ + (f"\nExtensions ({', '.join(E.load(CFG))}):\n{h}" if h else ""))
     fn, lo, hi = cmds[argv[1]]
     pos, opts, i = [], {}, 2
     while i < len(argv):
@@ -677,8 +677,3 @@ def main(argv):
         sys.exit(f"{argv[1]} needs {lo}{'' if lo == hi else '-' + str(hi)} argument(s), got {len(pos)} "
                  f"(quote names with spaces; run without arguments for help)")
     fn(pos, opts)
-
-
-if __name__ == "__main__":
-    import vi_cache            # run the module once under its own name (vi_query imports it too)
-    vi_cache.main(sys.argv)

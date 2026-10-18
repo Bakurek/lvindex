@@ -33,14 +33,17 @@ output as facts extracted with care, not as a guarantee. Heuristic parts are lab
 
 ## Quick start
 
+Install it (`pip install -e C:\path\to\lvindex` gives the `lvindex` command), or run it from the checkout
+without installing (`python -I C:\path\to\lvindex\lvindex.py ...`):
+
 ```bat
 cd C:\path\to\MyProject
-python -I C:\path\to\lvindex\vi_cache.py overview
-python -I C:\path\to\lvindex\vi_cache.py callers "My Class:Do Something.vi"
-python -I C:\path\to\lvindex\vi_cache.py check "My Class:Do Something.vi"
+lvindex overview
+lvindex callers "My Class:Do Something.vi"
+lvindex check "My Class:Do Something.vi"
 ```
 
-Run `vi_cache.py` without arguments for the full manual. `<vi>` can be a path, a qualified name (`Class:File.vi`),
+Run `lvindex` without arguments for the full manual. `<vi>` can be a path, a qualified name (`Class:File.vi`),
 or a unique substring of one.
 
 ## Project and configuration
@@ -56,10 +59,19 @@ Zero-config runs the core only: skeleton, cache and cards. Optional layers are s
 `vi-tools.toml`:
 - `[tags]`: indexed literals and their read / write / wait roles;
 - `[messages]`: your queued-message library;
-- `[actors]`: message-loop classes;
-- `[plc]`: a TwinCAT project to cross-check symbols against.
+- `[actors]`: message-loop classes and the names of their queue accessors.
 
-See [examples/vi-tools.toml](examples/vi-tools.toml) and the docstring of `vi_config.py`.
+See [examples/vi-tools.toml](examples/vi-tools.toml) and the docstring of `src/lvindex/config.py`.
+
+## Extensions
+
+Anything specific to one project, such as a PLC, a protocol, a driver or a config-file format, belongs in an
+**extension**: one Python file kept in the project next to its `vi-tools.toml` and listed there as
+`[extensions.<name>]`. An extension adds commands and extra lines to `find` and `overview`, and reads the index
+through a small API. It is loaded only when listed and after you run `lvindex trust` once in that project
+(a cloned project cannot run its own code on you); never in zero-config. [EXTENSIONS.md](EXTENSIONS.md) explains
+when to write one and how (also as instructions for an AI assistant). [examples/ext_config_keys.py](examples/ext_config_keys.py)
+is a working example.
 
 The cache lives in `<project root>\.index`. The folder gets its own `.gitignore`, so it never shows up in the
 project's repository. It holds:
@@ -77,15 +89,16 @@ project's repository. It holds:
 
 ## Files
 
-| File | Role |
+| File (`src/lvindex/`) | Role |
 |---|---|
-| `vi_rsrc.py` | LabVIEW RSRC container reader |
-| `vi_skeleton.py` | project skeleton from the binaries: owners, calls, dispatch, fingerprints |
-| `vi_cards.py` | cards and handler frames from AIXML |
-| `vi_cache.py` | entry point: cache, check / update / semantic diff, command dispatch |
-| `vi_query.py` | index queries |
-| `vi_config.py` | project discovery and configuration |
-| `vi_plc.py` | optional TwinCAT layer |
+| `rsrc.py` | LabVIEW RSRC container reader |
+| `skeleton.py` | project skeleton from the binaries: owners, calls, dispatch, fingerprints |
+| `cards.py` | cards and handler frames from AIXML |
+| `cache.py` | cache, check / update / semantic diff, command dispatch |
+| `query.py` | index queries |
+| `config.py` | project discovery and configuration |
+| `ext.py` | extension loader and API |
+| `cli.py` | command line entry point (`lvindex`, `python -m lvindex`, `lvindex.py`) |
 
 Design notes and known gaps: [ROADMAP.md](ROADMAP.md).
 

@@ -1,13 +1,12 @@
-"""Index queries over the skeleton (all VIs), the cards (exported VIs) and optional layers. See vi_cache.py.
+"""Index queries over the skeleton (all VIs), the cards (exported VIs) and optional layers. See cache.py.
 They never touch LabVIEW or the project; they may refresh skeleton.json and rebuild outdated cards in index.json."""
 import os
 import re
-import sys
 
-import vi_cache as V
-import vi_cards as K
-import vi_plc as P
-import vi_skeleton as S
+from . import cache as V
+from . import cards as K
+from . import ext as E
+from . import skeleton as S
 
 LIMIT = 30
 CFG = V.CFG
@@ -15,6 +14,7 @@ HIDE_CALLS = [re.compile(x) for x in CFG["hide_calls"]]
 HIDE_FILES = [re.compile(x, re.I) for x in CFG["hide"]]
 ACT = CFG.get("actors") or {}
 ENTRY = ACT.get("entry", "Core.vi")
+NAMED_Q = re.compile(ACT["named_queue"]) if ACT.get("named_queue") else None
 
 
 # ---------------------------------------------------------------- helpers
@@ -124,9 +124,9 @@ def compact(c, cap=220):
     parts = []
     if c["sends"]:
         parts.append("sends " + ", ".join(c["sends"]))
-    for ro, syms in c["plc"].items():
+    for ro, syms in c["tags"].items():
         if ro != "used":
-            parts.append(f"plc {ro} " + ", ".join(syms))
+            parts.append(f"{K.LABEL} {ro} " + ", ".join(syms))
     if c["events"]["gen"]:
         parts.append("gen " + ", ".join(c["events"]["gen"]))
     if c["results"]:
@@ -167,16 +167,16 @@ def find(p, o):
             items.append("name")
             prio = 0
         if c:
-            for ro, syms in c["plc"].items():
+            for ro, syms in c["tags"].items():
                 if hits(syms, t):
-                    items.append(f"plc {ro}: {hits(syms, t)}")
+                    items.append(f"{K.LABEL} {ro}: {hits(syms, t)}")
                     prio = min(prio, 1)
             for k, vals in [("sends", c["sends"]), ("handles", c["handles"]), ("status", c["results"])] + \
                     [(f"event {k}", vals) for k, vals in c["events"].items()]:
                 if hits(vals, t):
                     items.append(f"{k}: {hits(vals, t)}")
                     prio = min(prio, 1)
-            shown = {s for syms in c["plc"].values() for s in syms}
+            shown = {s for syms in c["tags"].values() for s in syms}
             shown |= {x for vals in [c["sends"], c["handles"]] + list(c["events"].values()) for x in vals}
         sym = hits([s for s in v["syms"] if s not in shown], t)
         if sym:
@@ -201,14 +201,8 @@ def find(p, o):
     if not rows:
         print(f"NO HIT for '{term}' among VI names, calls, tagged literals and cards")
     capped([r for _, _, r in rows], n, "VIs")
-    plc = P.load() if P.CONFIGURED else {"gvl": {}, "ads": {}}
-    decl = sorted(s for s in set(plc["gvl"]) | set(plc["ads"]) if t in s.lower())
-    if decl:
-        lit = {s for v in sk["vis"].values() for s in v["syms"]}
-        nolit = [s for s in decl if s not in lit]
-        print(f"-- PLC: {len(decl)} declared/ADS-config symbols match"
-              + (f"; without a VI literal (config-driven or unused by HMI): {', '.join(nolit[:6])}"
-                 f"{' +' + str(len(nolit) - 6) if len(nolit) > 6 else ''}" if nolit else "") + f"  (plc {term})")
+    for line in E.call(CFG, "find", term):
+        print(line)
     print(footer(sk, cm) + (f"; {hidden} VIs matching only by a diagram string hidden (-s)" if hidden else ""))
 
 
@@ -492,8 +486,8 @@ def ctx(p, o):
     if td:
         print(f"  typedefs: {', '.join(td)}")
     if c and not stale:
-        for ro, syms in c["plc"].items():
-            print(f"  plc {ro}: {', '.join(syms)}")
+        for ro, syms in c["tags"].items():
+            print(f"  {K.LABEL} {ro}: {', '.join(syms)}")
         for k in ("sends", "handles"):
             if c[k]:
                 print(f"  {k}: {', '.join(c[k])}")
@@ -511,14 +505,14 @@ def owner(sk, vi_q, queue, launch):
     acts = actors(sk)
     field, _, acc = queue.rpartition(":")
     base = cls if not field else field if field in acts else None     # "?:" / non-actor field: unknown
-    if acc == "Self-Queue":
+    if ACT.get("self_queue") and acc == ACT["self_queue"]:
         return base if base in acts else None
-    if acc == "Caller-Queue":
+    if ACT.get("caller_queue") and acc == ACT["caller_queue"]:
         if base not in acts:
             return None
         cores = [x.split(":")[0] for x in launch.get(base, []) if x.endswith(f":{ENTRY}")]
         return f"{cores[0]} (launcher of {base})" if len(cores) == 1 else f"caller of {base} (set at run time)"
-    m = re.match(r"(.+) Queue$", acc)
+    m = NAMED_Q.search(acc) if NAMED_Q else None
     if m:
         cand = [a for a in acts if a == m.group(1) or a.startswith(m.group(1) + " ")]
         return cand[0] + ("" if cand[0] == m.group(1) else " (by name)") if len(cand) == 1 else None
@@ -568,78 +562,14 @@ def msgs(p, o):
           + f"; {len(cur)} cards in total - senders in unexported VIs are missing")
 
 
-# ---------------------------------------------------------------- PLC
-def hmi_literals(sk):
+# ---------------------------------------------------------------- tagged literals
+def literals(sk):
+    """{tagged literal: [VIs holding it]} from the binaries."""
     out = {}
     for q, v in sk["vis"].items():
         for s in v["syms"]:
             out.setdefault(s, []).append(q)
     return out
-
-
-def no_plc():
-    if not P.CONFIGURED:
-        print("no PLC layer configured ([plc] in vi-tools.toml)")
-        return True
-    return False
-
-
-def plc(p, o):
-    if no_plc():
-        return
-    t, n = p[0].lower(), num(o, "-n", 8)
-    sk, d = V.skel(), P.load()
-    cm = V.card_map(sk)
-    lit = hmi_literals(sk)
-    syms = sorted(s for s in set(d["gvl"]) | set(d["ads"]) | set(lit) if t in s.lower())
-    if not syms:
-        print(f"no PLC symbol matching '{p[0]}' (GVL declarations, ADS config, VI literals)")
-        return
-    if len(syms) > n:
-        print(f"{len(syms)} symbols match - showing {n} (-n): {', '.join(syms[:40])}{' ...' if len(syms) > 40 else ''}")
-    for s in syms[:n]:
-        k, g = P.declared(d["gvl"], s)
-        print(f"== {s}  " + (f"{g['type']}{' := ' + g['init'] if g['init'] else ''}  [{g['file']}]"
-                             + (f"  (member of {k})" if k != s else "") if g
-                             else "NOT DECLARED in the PLC repo (renamed or removed?)"))
-        if g and g["doc"]:
-            print(f"  doc: {g['doc'][:400]}")
-        top = ".".join(s.split(".")[:2])
-        for what, refs in (("PLC", d["refs"].get(top, {})), ("PLC tests", d["tests"].get(top, {}))):
-            if refs:
-                w = sorted(x for x, k_ in refs.items() if k_ == "w")
-                r_ = sorted(x for x, k_ in refs.items() if k_ == "r")
-                print(f"  {what} writes: {', '.join(w) or '-'} | reads: {', '.join(r_) or '-'}")
-        if s in d["ads"]:
-            print(f"  ADS config: {', '.join(d['ads'][s])}")
-        vis = []
-        for q in lit.get(s, []):
-            c, stale = cm.get(q, (None, False))
-            ro = [k for k, ss in c["plc"].items() if s in ss] if c and not stale else []
-            vis.append(f"{q}({'/'.join(ro) or 'sym?'})")
-        print(f"  HMI VIs: {', '.join(vis) or 'none with a literal'}")
-
-
-def drift(p, o):
-    if no_plc():
-        return
-    sk, d = V.skel(), P.load()
-    lit = hmi_literals(sk)
-    miss = sorted(s for s in lit if not P.declared(d["gvl"], s)[0] and s.startswith("GVL_"))
-    print(f"HMI literals not declared in the PLC ({len(miss)} of {len(lit)}):")
-    for s in miss:
-        v = s.split(".", 1)[-1]
-        alt = sorted(k for k in d["gvl"] if k.split(".", 1)[-1].startswith(v) or k.split(".", 1)[-1] == v)
-        print(f"  {s}  in {', '.join(lit[s][:3])}{' ...' if len(lit[s]) > 3 else ''}"
-              + (f"  -> PLC has {', '.join(alt[:3])}" if alt else ""))
-    ads_miss = sorted(s for s in d["ads"] if not P.declared(d["gvl"], s)[0])
-    print(f"ADS config symbols not declared in the PLC ({len(ads_miss)} of {len(d['ads'])}): "
-          + (", ".join(ads_miss[:20]) + (" ..." if len(ads_miss) > 20 else "") if ads_miss else "-"))
-    unused = sorted(k for k in d["gvl"] if P.INTERFACE and k.startswith(P.INTERFACE) and k not in lit
-                    and k not in d["ads"])
-    print(f"interface variables ({', '.join(P.INTERFACE) or '-'}) neither in a VI literal nor in the ADS config: "
-          f"{len(unused)}"
-          + (f" ({', '.join(unused[:12])}{' ...' if len(unused) > 12 else ''})" if unused else ""))
 
 
 # ---------------------------------------------------------------- overview
@@ -710,20 +640,14 @@ def overview(p, o):
             print("## Handler VIs (cards; without [messages] the cases come from a dispatcher heuristic)")
             for q, c in hv:
                 print(f"  {q}: {', '.join(c['handles'][:15])}{' ...' if len(c['handles']) > 15 else ''}")
-    lit = hmi_literals(sk)
-    if P.CONFIGURED:
-        d = P.load()
-        print(f"## PLC handshakes (name convention cmd -> ACK [/ Rejected] in {P.CMD_GVL}; VIs with the literal)")
-        for c_, a_, r_ in P.handshakes(d["gvl"]):
-            hv = sorted({q for x in (c_, a_, r_) if x for q in lit.get(f"{P.CMD_GVL}.{x}", [])})
-            print(f"  {c_} -> {a_}{' / ' + r_ if r_ else ''}: {', '.join(hv) or 'no literal'}")
+    lit = literals(sk)
     if lit:
         groups = {}
         for x in lit:
             groups.setdefault(x.split(".")[0], set()).add(x)
-        label = (CFG.get("tags") or {}).get("label", "tags")
-        print(f"## {label} literals in VIs: " + ", ".join(f"{g} {len(v)}" for g, v in sorted(groups.items()))
-              + (f"; ADS config: {len(P.load()['ads'])}" if P.CONFIGURED else ""))
+        print(f"## {K.LABEL} literals in VIs: " + ", ".join(f"{g} {len(v)}" for g, v in sorted(groups.items())))
+    for line in E.call(CFG, "overview"):
+        print(line)
     st = sk["stats"]
     vend = sorted({v["file"].split(os.sep)[0] for v in sk["vis"].values()} & {"external", "vendor", "3rdparty", "dependencies"})
     if vend and not CFG["skip"]:
@@ -731,9 +655,10 @@ def overview(p, o):
     print(f"## Coverage: {cur} current cards of {len(sk['vis'])} VIs; same-name VIs kept by path {len(st['dups'])}; "
           f"skipped folders: {', '.join(st.get('skipped', [])) or '-'}")
     print("## Next: ctx <vi> | card <vi> --frames | find <term> | callers <vi> | unexported"
-          + (" | msgs" if K.MSG is not None else "") + (" | plc <sym>" if P.CONFIGURED else ""))
+          + (" | msgs" if K.MSG is not None else "")
+          + "".join(f" | {c}" for c in E.registered()))
 
 
 COMMANDS = {"find": (find, 1, 1), "callers": (callers, 1, 1), "calls": (calls, 1, 1), "uses": (uses, 1, 1),
             "class": (klass, 1, 1), "unexported": (unexported, 0, 1), "card": (card, 1, 1), "ctx": (ctx, 1, 1),
-            "msgs": (msgs, 0, 1), "plc": (plc, 1, 1), "drift": (drift, 0, 0), "overview": (overview, 0, 0)}
+            "msgs": (msgs, 0, 1), "overview": (overview, 0, 0)}

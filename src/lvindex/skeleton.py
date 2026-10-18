@@ -1,6 +1,6 @@
 """No-export skeleton of the whole project, read straight from the files (no LabVIEW; incremental by mtime/size).
 
-Per VI (from the binary RSRC container, see vi_rsrc.py):
+Per VI (from the binary RSRC container, see rsrc.py):
   calls  - subVIs called on the block diagram (LIbd block): {name: [kinds]}, kinds:
            IUVI static call, DyOM dynamic-dispatch call, CPM Call Parent Method (stored as DyOM, flag byte 02),
            PUPV polymorphic VI, SVVI static VI reference, VIM? malleable VI (heuristic, see below).
@@ -17,7 +17,7 @@ Per typedef (.ctl): deps (nested typedefs / classes), sha256.
 Per class / library (.lvclass / .lvlib XML): parent (superclass inside src), extern_parent (outside src, e.g. vi.lib),
   implements (interfaces), interface flag, lib chain, members, version, fp = hash of the type (VCTP) and default-data
   (DFDS) blocks of the private data (NI.LVClass.FlattenedPrivateDataCTL) - stable when only methods change.
-hist: {dep: [[fingerprint, file mtime when first seen], ...]} - lets vi_cache.py find the fingerprint a dependency
+hist: {dep: [[fingerprint, file mtime when first seen], ...]} - lets cache.py find the fingerprint a dependency
   had at export time.
 Naming: owner = innermost class / library. Qualified VI name = "<owner>:<file>"; an owner name that is not unique
   gets its outer library ("Name [Lib]") or, for a library clashing with a class, ".lvlib". A VI whose qualified name
@@ -31,7 +31,7 @@ import os
 import re
 import struct
 
-from vi_rsrc import blocks, parse, unpack
+from .rsrc import blocks, parse, unpack
 
 SCHEMA = 7
 FP_V = 1          # fingerprint definition version: history survives schema changes while this is equal

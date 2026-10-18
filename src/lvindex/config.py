@@ -1,4 +1,4 @@
-"""Project configuration of the VI tools: which LabVIEW project, where its cache lives, optional layers.
+"""Project configuration of lvindex: which LabVIEW project, where its cache lives, optional layers, extensions.
 
 Discovery (first hit wins):
   1. env VI_PROJECT (set by `--project <path>`): a vi-tools.toml file, or a folder with .claude\\vi-tools.toml,
@@ -18,8 +18,8 @@ vi-tools.toml (paths relative to the file; every key optional except src):
   hide = ['(^|[\\\\/])accessors[\\\\/]']        regexes on the file path of VIs hidden in trees / unexported lists
   hide_calls = ['^Clear Errors\\.vi$']    regexes on callee names hidden in trees and frame cards
   status_enum = "Success"               enum constants containing this item are listed as `status consts`
-  [tags]                                 string literals worth indexing (e.g. PLC symbol names)
-  label = "plc"; literal = 'regex'
+  [tags]                                 string literals worth indexing (e.g. symbol / tag / key names)
+  label = "plc"; literal = 'regex'       label = name of the tags in outputs (default "tag")
   [tags.roles]  read = ['^read symbol'] ; write = [...] ; wait = [...]   regexes on the lowercase callee name;
                                          its symbol inputs get that role
   [messages]                             a message-queue library: VIs whose call sends / receives a message
@@ -27,8 +27,12 @@ vi-tools.toml (paths relative to the file; every key optional except src):
   queue_ports = ["Message Queue"]; message_ports = ["Message"]; data_port = "Message Data"
   [actors]                               message-loop classes: children of `base` with an `entry` VI
   base = "Loop"; entry = "Core.vi"
-  [plc]                                  TwinCAT repo for plc / drift (vi_plc.py)
-  repo = "../PLC/X"; ads_config = "../config/ADS"; cmd_gvl = "GVL_Cmd"; interface = ["GVL_Cmd.", "GVL_Status."]
+  self_queue = "Self-Queue"              accessor (last part of a queue name) = the sender's own queue
+  caller_queue = "Caller-Queue"          accessor = the queue of the actor that launched the sender
+  named_queue = '(.+) Queue$'            regex on the accessor, group 1 = name of the owning actor
+                                         (each key optional: without it that kind of queue stays "owner unknown")
+  [extensions.<name>]                    project-specific extension module (see EXTENSIONS.md); loaded ONLY when
+  file = "my_ext.py"                     listed here, never in zero-config. Other keys = the extension's settings
 """
 import glob
 import hashlib
@@ -37,7 +41,8 @@ import os
 import sys
 import tomllib
 
-KNOWN = {"name", "src", "skip", "cache", "hide", "hide_calls", "status_enum", "tags", "messages", "actors", "plc"}
+KNOWN = {"name", "src", "skip", "cache", "hide", "hide_calls", "status_enum", "tags", "messages", "actors",
+         "extensions"}
 DEFAULT_HIDE = [r"(^|[\\/])accessors[\\/]"]
 DEFAULT_HIDE_CALLS = [r"^(Clear Errors|Simple Error Handler|General Error Handler|Error Cluster From Error Code|"
                       r"Merge Errors|Get LV Class Name)\.vi$"]
@@ -138,14 +143,11 @@ def load():
            "cache": rel(raw["cache"]) if raw.get("cache") else os.path.join(root, ".index"),
            "hide": raw.get("hide", DEFAULT_HIDE), "hide_calls": raw.get("hide_calls", DEFAULT_HIDE_CALLS),
            "status_enum": raw.get("status_enum"), "tags": raw.get("tags"), "messages": raw.get("messages"),
-           "actors": raw.get("actors"), "plc": None}
-    if raw.get("plc"):
-        p = dict(raw["plc"])
-        for k in ("repo", "ads_config"):
-            if p.get(k):
-                p[k] = rel(p[k])
-        cfg["plc"] = p
-    # everything that changes what the skeleton / cards contain
+           "actors": raw.get("actors"), "dir": here, "extensions": {}}
+    for nm, sec in (raw.get("extensions") or {}).items():
+        if not isinstance(sec, dict) or not sec.get("file"):
+            sys.exit(f"{path}: [extensions.{nm}] needs `file` (path of the extension module)")
+        cfg["extensions"][nm] = {"file": rel(sec["file"]), "config": {k: v for k, v in sec.items() if k != "file"}}
     sig = {"skip": cfg["skip"], "literal": (cfg["tags"] or {}).get("literal")}   # what the skeleton depends on
     cfg["hash"] = hashlib.sha256(json.dumps(sig, sort_keys=True).encode()).hexdigest()[:8]
     return cfg

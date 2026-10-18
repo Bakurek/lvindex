@@ -1,10 +1,10 @@
 """Mechanical facts ("card") extracted from a cached AIXML export - no interpretation, no LLM.
 
-card = {v, vi, in, out, calls, plc: {read, write, wait, case, used, dyn}, sends, handles,
+card = {v, vi, in, out, calls, tags: {read, write, wait, case, used, dyn}, sends, handles,
         events: {gen, reg, handled}, results, dynamic}
 Generic parts (always): terminals, calls, Call Parent Method, user events, Event Structure frames, frame consts.
 Project parts (configure(cfg) with the vi-tools.toml sections; absent section = empty field):
-  plc      [tags]: string literals matching tags.literal with a role (read / write / wait from tags.roles regexes
+  tags     [tags]: string literals matching tags.literal with a role (read / write / wait from tags.roles regexes
            on the callee name, case = only branched on, used = anything else); dyn = role calls whose symbol input
            is not a string constant (comes from data at run time)
   sends    [messages]: "<message>[<inner>] -> <queue>" for calls of the enqueue VIs; inner = first field of a
@@ -15,18 +15,19 @@ Project parts (configure(cfg) with the vi-tools.toml sections; absent section = 
            look like dispatchers (>= 3 named cases, not error / boolean, inside a loop)
   results  status_enum: enum constants containing that item, not necessarily outputs
 frames(path) -> per-handler cards for those cases and Event Structure frames (computed on demand, never stored).
-CARD_V changes with this file and with the configuration: older cards are rebuilt lazily by vi_cache.py.
+CARD_V changes with this file and with the configuration: older cards are rebuilt lazily by cache.py.
 """
 import hashlib
 import re
 import xml.etree.ElementTree as ET
 
-with open(__file__, "rb") as _f:
-    _SRC_HASH = hashlib.sha256(_f.read()).hexdigest()
+with open(__file__, "rb") as _f:                  # line endings normalised: a CRLF / LF checkout is the same code
+    _SRC_HASH = hashlib.sha256(_f.read().replace(b"\r\n", b"\n")).hexdigest()
 CARD_V = _SRC_HASH[:8]
 
 WIRE = re.compile(r"(?:^|,)([^:,]*):(\d+\.[^,]*)")
 SYMBOL = None             # tags.literal (str regex) or None
+LABEL = "tag"             # tags.label: name of the tags in outputs
 ROLES = {}                # role -> [compiled regex on the lowercase callee name]
 MSG = None                # [messages] section or None
 STATUS = None             # status_enum item or None
@@ -37,9 +38,10 @@ NOISE_CALL = re.compile(r"(^|:)(Clear Errors|Get LV Class Name)\.vi$")
 
 
 def configure(cfg):
-    """Apply the project configuration (vi_config.get()); also changes CARD_V."""
-    global SYMBOL, ROLES, MSG, STATUS, CARD_V, NOISE_CALL, SYMBOL_PORT
+    """Apply the project configuration (config.get()); also changes CARD_V."""
+    global SYMBOL, ROLES, MSG, STATUS, CARD_V, NOISE_CALL, SYMBOL_PORT, LABEL
     tags = cfg.get("tags") or {}
+    LABEL = tags.get("label", "tag")
     SYMBOL_PORT = tags.get("symbol_port", "symbol").lower()
     SYMBOL = re.compile(tags["literal"]) if tags.get("literal") else None
     ROLES = {r: [re.compile(x) for x in pats] for r, pats in (tags.get("roles") or {}).items()} if SYMBOL else {}
@@ -295,14 +297,14 @@ def inner_message(m, wire):
 def card_of(m, scope, top=False):
     """Card for the subtree of scope (the whole VI when top)."""
     r = m.root
-    c = {"v": CARD_V, "vi": short(r.get("_name")), "in": [], "out": [], "calls": set(), "plc": {}, "sends": set(),
+    c = {"v": CARD_V, "vi": short(r.get("_name")), "in": [], "out": [], "calls": set(), "tags": {}, "sends": set(),
          "handles": [], "events": {"gen": set(), "reg": set(), "handled": []}, "results": set(), "dynamic": []}
 
     def add_syms(text, wires):
         syms = SYMBOL.findall(text or "") if SYMBOL else []
         if syms:
             for ro in roles(m, wires):
-                c["plc"].setdefault(ro, set()).update(syms)
+                c["tags"].setdefault(ro, set()).update(syms)
 
     if top:
         for e in r:
@@ -337,7 +339,7 @@ def card_of(m, scope, top=False):
                         src = [x for x in m.leaves(w) if not (x[0] is not None and x[0].tag == "Constant"
                                                               and "string" in x[0].get("type", ""))]
                         if src:
-                            c["plc"].setdefault("dyn", set()).add(
+                            c["tags"].setdefault("dyn", set()).add(
                                 f"{vi_name(e)} {port}<-{describe(*src[0])}")
         elif e.tag == "Node" and e.get("_name") == "Call Parent Class Method":
             c["calls"].add("Call Parent Method")
@@ -362,7 +364,7 @@ def card_of(m, scope, top=False):
                 add_syms(e.get("selector"), [e.get("selectout")])
             else:                                                 # symbol only used to branch on
                 for sym in (SYMBOL.findall(e.get("selector") or "") if SYMBOL else []):
-                    c["plc"].setdefault("case", set()).add(sym)
+                    c["tags"].setdefault("case", set()).add(sym)
         if e.tag == "Structure" and e.get("_name") == "Event Structure":
             c["events"]["handled"] += [unesc(f.get("selector")) for f in e.findall("CaseFrame")]
     if top:
@@ -370,7 +372,7 @@ def card_of(m, scope, top=False):
                         for kind, name, parent, _ in handler_frames(m) if kind == "msg"]
     for k in ("calls", "sends", "results"):
         c[k] = sorted(c[k])
-    c["plc"] = {k: sorted(v) for k, v in sorted(c["plc"].items())}
+    c["tags"] = {k: sorted(v) for k, v in sorted(c["tags"].items())}
     c["events"] = {k: sorted(set(v)) for k, v in c["events"].items()}
     return c
 
@@ -478,8 +480,8 @@ def fmt_frame(fr, extra=None, hide=None):
         parts.append("calls: " + ", ".join(f"{x}{(extra or {}).get(x, '')}" for x in calls))
     if c["sends"]:
         parts.append("sends: " + ", ".join(c["sends"]))
-    for ro, syms in c["plc"].items():
-        parts.append(f"plc {ro}: {', '.join(syms)}")
+    for ro, syms in c["tags"].items():
+        parts.append(f"{LABEL} {ro}: {', '.join(syms)}")
     for k in ("gen", "reg"):
         if c["events"][k]:
             parts.append(f"event {k}: {', '.join(c['events'][k])}")
@@ -497,8 +499,8 @@ def fmt(c, rel=""):
         lines.append(f"  in: {', '.join(c['in'])} | out: {', '.join(c['out'])}")
     if c["calls"]:
         lines.append(f"  calls: {', '.join(c['calls'])}")
-    for ro, syms in c["plc"].items():
-        lines.append(f"  plc {ro}: {', '.join(syms)}")
+    for ro, syms in c["tags"].items():
+        lines.append(f"  {LABEL} {ro}: {', '.join(syms)}")
     if c["sends"]:
         lines.append(f"  sends: {', '.join(c['sends'])}")
     if c["handles"]:
