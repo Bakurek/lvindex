@@ -14,6 +14,8 @@ Per VI (from the binary RSRC container, see rsrc.py):
   strs   - other printable strings of the diagram heap (constants, labels, comments) - full-text search only
   orphan - true when the file lies in a class folder but is not listed in the .lvclass
   pane   - connector-pane fingerprint (pane_fp): pattern, slot labels, types, input / output and dispatch flags
+  byname - VI file names in the diagram heap that are neither a static callee nor the VI itself: candidates for a
+           call by name or by reference (heuristic)
 Per typedef (.ctl): deps (nested typedefs / classes), sha256.
 Per class / library (.lvclass / .lvlib XML): parent (superclass inside src), extern_parent (outside src, e.g. vi.lib),
   implements (interfaces), interface flag, lib chain, members, version, fp = hash of the type (VCTP) and default-data
@@ -34,7 +36,7 @@ import struct
 
 from .rsrc import blocks, parse, unpack
 
-SCHEMA = 8
+SCHEMA = 9
 FP_V = 1          # fingerprint definition version: history survives schema changes while this is equal
 EXT_PATH = (b"<userlib>", b"<vilib>", b"<instrlib>")
 IDENT = re.compile(rb"([A-Z][A-Za-z0-9]{3})\x00\x00\x00[\x00-\x0f]")
@@ -351,9 +353,12 @@ def scan_vi(path, symbol=None):
             calls.setdefault(v, set()).add("VIM?")
             if all_ext:
                 ext.add(v)
+    leaves = {c.split(":")[-1].lower() for c in calls} | {os.path.basename(path).lower()}   # static callees, self
+    byname = sorted({n for n in (s.split(":")[-1].split("\\")[-1] for s in strs if s.lower().endswith((".vi", ".vim")))
+                     if n.lower() not in leaves}, key=str.lower)
     strs = {s for s in strs if not s.lower().endswith((".lvclass", ".lvlib", ".vi", ".vim", ".ctl"))}
     return {"calls": {k: sorted(v) for k, v in calls.items()}, "deps": sorted(deps), "syms": sorted(syms),
-            "strs": sorted(strs - syms), "ext": sorted(ext), "pane": pane_fp(b)}
+            "strs": sorted(strs - syms), "ext": sorted(ext), "pane": pane_fp(b), "byname": byname}
 
 
 def scan_ctl(path):
@@ -426,7 +431,7 @@ def build(src, old=None, full=False, skip=(), symbol=None, cfg_hash=""):
             except Exception as ex:                     # unusual file: keep it listed
                 stats["errors"] += 1
                 info = {"calls": {}, "deps": [], "syms": [], "strs": [], "ext": [], "sha256": None, "pane": None,
-                        "error": str(ex)[:80]}
+                        "byname": [], "error": str(ex)[:80]}
             new[kind][q] = {**info, "raw_calls": info.get("calls", {}), "raw_deps": info["deps"],
                             "raw_ext": info.get("ext", []), "file": rel,
                             "mtime": st.st_mtime, "size": st.st_size, "class": cls, "orphan": orphan}

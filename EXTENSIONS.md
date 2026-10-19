@@ -61,6 +61,10 @@ All names are optional. A file with only `COMMANDS` is a valid extension.
 | `find(api, term) -> [str]` | at the end of `find <term>` | extra hit lines, e.g. declarations matching the term |
 | `overview(api) -> [str]` | inside `overview` | a short section, e.g. counts and the commands to use |
 | `API` | module global, set by the loader | the same `api` object, for use inside command functions |
+| `API_VERSION = 1` | read by the loader | the extension API the file was written for; on a mismatch the extension is not loaded (a warning says why). The check runs after the module's top-level code, so keep that code free of side effects. Leave it out to load regardless |
+
+The API version covers the `api` attributes below except `api.V`, `api.K` and `api.S`, which expose core internals
+and may change with any release.
 
 `opts` holds the core options: `-n N`, `-d N`, `-s`, `--all` (strings / `True`). Extensions cannot add options;
 use positional arguments instead.

@@ -23,28 +23,35 @@ Read the index first and the VI's AIXML only for what the index cannot answer:
 4. The whole export only when the question is about wiring the card does not show.
 
 To find your way around: `overview` (entry points, classes, message loops), `find <term>` (literals, messages,
-events, calls; `-s` also free text), `msgs [name]` (sender -> queue -> handler, when configured).
+events, calls; `-s` also free text), `msgs [name]` (sender -> queue -> handler, when configured), `path <a> <b>`
+(how a reaches b: calls with dispatch, and message hops when configured), `diff <ref> [<ref2>]` (what changed in
+the source files between git revisions, as skeleton facts - for reviewing a branch or a commit).
+Long outputs: add `--max-tokens N` to any command; it says how much it left out.
 
 Markers: `(no card)` = never exported, `(card stale)` = saved after its export, do not rely on that card,
 `(not in lvclass)` = stray file in a class folder.
 
 ## Before editing a VI
 
-- `callers <vi>`: who is affected, with dynamic dispatch expanded. VIs called by reference or by name do not show
-  up there; say so when the list is the basis of a decision.
+- `callers <vi>`: who is affected, with dynamic dispatch expanded. VIs called by reference or by name are not
+  static callers; a `by name?` line lists VIs whose diagram holds the file name as a string (heuristic). Say so
+  when the list is the basis of a decision.
 - `class <name>` before changing a method: overrides, children, interfaces.
 - `uses <typedef|class>` before changing a typedef or a class's private data.
 
 ## After an edit (labview-mcp regeneration, or the user editing in LabVIEW)
 
 1. The VI must be saved: `check` reads the file on disk, an export may come from LabVIEW memory.
-2. `check <vi>`. UNCHANGED / SAME = nothing to do; CHANGED / NEW = export; `DEPS?` = a typedef or the class
+2. `check <vi>` (`--with-callers` also checks its direct callers). UNCHANGED / SAME = nothing to do; CHANGED / NEW = export; `DEPS?` = a typedef or the class
    private data changed since the export: export again, or `ackdeps <vi>` after checking it does not matter;
    `DEPS? ... (unknown at export)` = the dependency was saved after the export before its state was recorded, same
    choice. `DEPS? pane <subVI>` = the connector pane of a called subVI changed (terminal added, removed, renamed,
    retyped, moved): the caller's export is outdated although its file is unchanged - export the caller again.
 3. Export the CHANGED / NEW VIs with labview-mcp `lvai_convert_vis_to_aixml` (refresh=true) into a scratch folder.
-4. `update <vi> <export.xml>` for each. Read the CARD DELTA first. It matches by name, not by uid, so it stays
+   A class member with class-typed terminals cannot be regenerated through AIXML at all (both labview-mcp backends
+   refuse it); an edit of such a VI is the user's, in LabVIEW.
+4. `update <vi> <export.xml> --backend <name>` for each, or `update --dir <folder> --backend <name>` for all exports
+   in a folder; `<name>` is the `backend` the export tool answered (e.g. grpc). Read the CARD DELTA first. It matches by name, not by uid, so it stays
    valid when a regeneration renumbered every uid. It compares terminals (name, connector index, type), calls,
    primitives, constants, case selectors, messages, tags and events, for the VI outside its handler frames `(VI)`
    and per handler frame. Confirm that only the intended frames changed. Anything else (a call lost, a frame gone,
@@ -52,7 +59,8 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
    The CARD DELTA does not compare wiring. The per-uid diff below it does, but after a regeneration (it then says
    that few old uids are left) it lists most objects as removed and added; for a wiring question read the affected
    frame with `card <vi> --xml NAME` instead.
-   `NO CACHED VERSION` = first export of this VI: there is nothing to compare, read the card.
+   `NO CACHED VERSION` = first export of this VI: there is nothing to compare, read the card. A `NOTE` about a
+   backend change = differences may come from the two backends, not from the VI.
 5. `SELF-CHECK MISMATCH` = the export came from unsaved edits (save, export again) or the skeleton misread the
    file; `SELF-CHECK skipped` = the VI is outside the skeleton; `REFUSED` = the VI was saved during the export:
    `check` and export again.

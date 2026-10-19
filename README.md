@@ -11,14 +11,26 @@ program's logic without exporting and reading whole VIs again and again.
   - string literals.
 
   It is incremental: a rebuild of a ~450-VI project takes about 2.6 s, an update about 0.2 s.
-- **Cards**: compact facts of an exported VI, about 20–40x smaller than the AIXML export. Each card lists:
+- **Cards**: compact facts of an exported VI, a small fraction of the AIXML export. Each card lists:
   - calls and handler frames (message cases, event cases);
   - messages sent and the queues they go to;
   - constants and tagged literals.
 - **Review cache**: `check` tells which VIs changed since their last export. `update` prints a semantic diff
   against the cached export, so unchanged VIs never have to be read again.
-- **Queries**: `overview`, `ctx`, `callers`, `calls`, `uses`, `class`, `card`, `find`, `msgs`, and more. Each answers
-  in about 0.2 s.
+- **Queries**: `overview`, `ctx`, `callers`, `calls`, `uses`, `class`, `card`, `find`, `msgs`, `path`, and more.
+  Each answers in about 0.2 s. `diff <ref>` compares the source files of two git revisions at skeleton level.
+
+Measured on a ~460-VI project (tokens approximated as characters / 4, what an assistant reads to answer):
+
+| Task | lvindex vs reading exports |
+|---|---|
+| handler frames of a message loop / one handler | 47x / 218x fewer tokens than its export |
+| usage context of a VI | 14x |
+| reviewing an edit of a regenerated VI | 29x fewer than re-reading the export |
+| callers of a method, uses of a literal, a message's sender and handler | 2–6x fewer than grep over the exports |
+
+The grep comparison flatters grep: it ran only over the exported fifth of the project, and grep resolves neither
+dynamic dispatch nor message routing. Median over these 7 tasks: 14x.
 
 The format knowledge (RSRC link records, AIXML structure) is reverse-engineered and not documented by NI. Treat the
 output as facts extracted with care, not as a guarantee. Heuristic parts are labelled as such in the output.

@@ -11,13 +11,16 @@ Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memo
                         (also nested), its own class's private data or the connector pane of a subVI it calls
                         ("pane <subVI>") changed since the cached export.
                         "(unknown at export)" = saved after the export before its state was recorded: re-export,
-                        or `ackdeps` after checking it
+                        or `ackdeps` after checking it. --with-callers also checks the direct callers
   (export CHANGED/NEW with lvai_convert_vis_to_aixml refresh=true into the scratchpad)
   update <vi> <aixml>   diff vs the cached export, store it, SELF-CHECK of the export against the saved file;
                         refuses if the VI was saved during export. The diff: CARD DELTA (terminals, calls, primitives,
                         constants, cases, messages, events - for the VI and per handler frame, matched by name, so also
                         valid when a regeneration changed every uid; no wiring), then the semantic diff per stable uid
                         (+ - ~, wires resolved)
+  update --dir <folder> the same for every export in a folder, matched to its VI by the name in the export
+  [--backend NAME]      on update / seed: the AIXML backend that made the export (labview-mcp answers it as
+                        `backend`); a change of backend against the cached export is pointed out
   seed <vi> <aixml>     store an export without diff (VI not saved after the export)
 
 Understanding the program (skeleton = all VIs from the binary files, no export; card = facts of an exported VI):
@@ -27,7 +30,8 @@ Understanding the program (skeleton = all VIs from the binary files, no export; 
                         tagged literals, card state
   card <vi> [--frames | --frame NAME | --xml NAME]   card of an exported VI; per-handler cards (message cases or
                         dispatcher cases + Event Structure frames, callee card state); --frame also prints the callee
-                        cards (one hop); --xml = XML of that frame only. Nested cases are flattened into the frame
+                        cards (one hop); --xml = XML of that frame only (or of any case whose selector matches).
+                        Nested cases are flattened into the frame
   find <term> [-s] [-n N]   matched items: tagged literals (role from the card, "sym?" = role unknown), messages
                         and events (cards), calls, extension hits; -s also VIs that match only by a string
   callers <vi> [-n N]   dispatch expanded: DyOM on a wire of class W runs W's nearest implementation or an override
@@ -37,6 +41,12 @@ Understanding the program (skeleton = all VIs from the binary files, no export; 
   class <name> [--all]  superclass / external parent, interfaces, children, overrides, typedefs, methods
   unexported [filter] [--all] [-n N]   VIs without a current card, with file size
   msgs [name]           [messages]: senders -> queue owner -> handler (cards only; gaps printed as such)
+  diff <ref> [<ref2>]   what changed in the source files between two git revisions (or a revision and the working
+                        tree, untracked files included), as skeleton facts: calls, typedefs, literals, connector pane,
+                        class parents and members; a typedef shows any resave as a content change
+  path <a> <b> [-n N]   shortest call paths from a down to b (dispatch expanded; with [messages] + [actors] also
+                        message hops sender -> owning actor's entry VI, from current cards)
+Any command: --max-tokens N cuts the output at about N tokens (whole lines) and says how much was left out.
 Markers: "(no card)" never exported, "(card stale)" VI saved after its export - card not used,
   "(not in lvclass)" file in a class folder but not a member (stray copy or dead code).
 Call kinds: IUVI static, DyOM dynamic dispatch, CPM Call Parent Method, PUPV polymorphic, SVVI static VI reference,
@@ -47,11 +57,12 @@ Limits: roles, messages and events exist only for exported VIs; names built at r
 Maintenance: ackdeps <vi>... | show <vi> | semdiff <a.xml> <b.xml> | skeleton [--full] | repair | recard | list
 Extensions: trust [--remove] allows the [extensions] of this lvindex.toml to run (once per project and user)
 Store: the project's cache folder (default <project root>\\.index, lvindex.toml `cache` overrides):
-  index.json (export names relative to xml\\), xml\\, skeleton.json, index.lock (held while index.json is
-  modified), .gitignore (`*`, written when the folder is created).
+  index.json (keys = VI paths relative to src, export names relative to xml\\), xml\\, skeleton.json,
+  index.lock (held while index.json is modified), .gitignore (`*`, written when the folder is created).
 """
 import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -106,6 +117,16 @@ def load():
         x = e.get("xml")
         if x and (not os.path.isabs(x) or not os.path.exists(x)):
             e["xml"] = os.path.join(XMLDIR, os.path.basename(x))
+    for k in [k for k in idx if os.path.isabs(k)]:              # older caches: absolute keys
+        nk = key(k)
+        if os.path.isabs(nk):                                  # not under src: maybe the project moved
+            parts = os.path.normcase(os.path.normpath(k)).split(os.sep)
+            nk = next((os.sep.join(parts[i:]) for i in range(1, len(parts) - 1)     # at least folder + file
+                       if os.path.isfile(os.path.join(SRC, *parts[i:]))), nk)
+        if nk != k:
+            old = idx.pop(k)
+            if nk not in idx or idx[nk].get("exported_at", 0) < old.get("exported_at", 0):
+                idx[nk] = old
     return idx
 
 
@@ -159,8 +180,14 @@ def locked(timeout=60, stale=300):
             os.remove(LOCK)
 
 
+SRC_REAL = os.path.normcase(os.path.realpath(SRC)).rstrip(os.sep) + os.sep     # also for a drive root
+
+
 def key(vi):
-    return os.path.normcase(os.path.realpath(vi))
+    """Index key of a VI: its path relative to src (normcased), so a moved project keeps its cache; the absolute
+    path for a VI outside src."""
+    p = os.path.normcase(os.path.realpath(vi))
+    return p[len(SRC_REAL):] if p.startswith(SRC_REAL) else p
 
 
 def sha(path):
@@ -534,12 +561,23 @@ def diff_report(old_path, new_path):
 
 
 # ---------------------------------------------------------------- cache commands
-def check(vis):
+def with_callers(sk, vis):
+    """The given VI paths plus their direct callers (dispatch expanded), each once."""
+    from . import query as Q
+    r, out, seen = Q.rev_index(sk), [], set()
+    for vi in list(vis) + [entry_path(sk, c) for vi in vis for c in sorted({c for c, _, _ in r.get(qname(sk, vi), [])})]:
+        if key(vi) not in seen:
+            seen.add(key(vi))
+            out.append(vi)
+    return out
+
+
+def check(vis, callers=False):
     with locked():
         idx = load()
         sk = skel()
-        for name_ in vis:
-            vi = find_vi(sk, name_)
+        paths = [p for p in (find_vi(sk, n) for n in vis) if p]
+        for vi in with_callers(sk, paths) if callers else paths:
             if vi is None:
                 continue
             k = key(vi)
@@ -608,9 +646,10 @@ def self_check(sk, q, xml_path):
     return ("SELF-CHECK MISMATCH - export from unsaved edits, or a skeleton heuristic broke: " + "; ".join(diffs) + note)
 
 
-def store(idx, vi, aixml, vi_meta):
+def store(idx, vi, aixml, vi_meta, backend=None):
     """Write the stripped export under a content-unique name (a crash before the index save keeps the old XML
-    valid) and update the index entry. Returns (new xml, previous xml)."""
+    valid) and update the index entry (backend: the AIXML backend that made the export, None = not given).
+    Returns (new xml, previous xml)."""
     os.makedirs(XMLDIR, exist_ok=True)
     with open(aixml, encoding="utf-8") as f:
         text = f.read()
@@ -627,7 +666,8 @@ def store(idx, vi, aixml, vi_meta):
     t = os.stat(aixml).st_mtime
     prev = idx.get(key(vi), {}).get("xml")
     idx[key(vi)] = {**vi_meta, "xml": out, "exported_at": t, "path": os.path.realpath(vi), "card": make_card(out),
-                   "deps_fp": dep_baseline(sk, q, t) if q else {}, "deps_v": DEPS_V}
+                   "deps_fp": dep_baseline(sk, q, t) if q else {}, "deps_v": DEPS_V,
+                   "backend": backend or idx.get(key(vi), {}).get("backend")}
     print(self_check(sk, q, out))
     return out, prev
 
@@ -638,7 +678,7 @@ def drop_old(prev, out):
             os.remove(prev)
 
 
-def update(vi, aixml):
+def update(vi, aixml, backend=None):
     with locked():
         vi = find_vi(skel(), vi)
         if vi is None:
@@ -651,16 +691,48 @@ def update(vi, aixml):
             print("REFUSED: VI was saved during/after the export - run check and export again")
             return
         if e.get("xml") and os.path.exists(e["xml"]):
+            if backend and e.get("backend") and e["backend"] != backend:
+                print(f"NOTE: the cached export came from backend {e['backend']}, this one from {backend} - "
+                      f"differences below may come from the backends, not from the VI")
             print(diff_report(e["xml"], aixml))
         else:
             print("NO CACHED VERSION - read the full export")
-        out, prev = store(idx, vi, aixml, now)
+        out, prev = store(idx, vi, aixml, now, backend)
         save(idx)
         drop_old(prev, out)
         print("XML:", out)
 
 
-def seed(vi, aixml):
+def export_target(sk, xml_path):
+    """VI path an export belongs to: the qualified name in the export's root element, else its file name
+    (labview-mcp writes '<VI name>.<8 hex>.xml'); None when it does not resolve to exactly one VI."""
+    with open(xml_path, encoding="utf-8", errors="replace") as f:
+        m = re.search(r'<VI _name="([^"]*)"', f.read(2000))
+    name_ = K.unesc(m.group(1)) if m else ""
+    if name_:
+        q = S.canon(sk, ":".join(K.short(name_).split(":")[-2:]))       # innermost owner, as in cards
+        if q in sk["vis"]:
+            return entry_path(sk, q)
+    stem = re.sub(r"\.[0-9A-Fa-f]{8}$", "", os.path.splitext(os.path.basename(xml_path))[0])
+    cand = [q for q, v in sk["vis"].items() if os.path.splitext(os.path.basename(v["file"]))[0].lower() == stem.lower()]
+    return entry_path(sk, cand[0]) if len(cand) == 1 else None
+
+
+def update_dir(folder, backend=None):
+    """update for every export in a folder, each matched to its VI (export_target)."""
+    sk = skel()
+    files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".xml")) if os.path.isdir(folder) else []
+    if not files:
+        print(f"no .xml exports in {folder}")
+    for fn in files:
+        p = os.path.join(folder, fn)
+        vi = export_target(sk, p)
+        print(f"===== {fn} -> {qname(sk, vi) if vi else 'NO UNIQUE VI - pass it as update <vi> <xml>'}")
+        if vi:
+            update(vi, p, backend)
+
+
+def seed(vi, aixml, backend=None):
     vi = find_vi(skel(), vi)
     if vi is None:
         return
@@ -669,7 +741,7 @@ def seed(vi, aixml):
         return
     with locked():
         idx = load()
-        out, prev = store(idx, vi, aixml, {**meta(vi), "sha256": sha(vi)})
+        out, prev = store(idx, vi, aixml, {**meta(vi), "sha256": sha(vi)}, backend)
         save(idx)
         drop_old(prev, out)
         print("SEEDED", out)
@@ -698,7 +770,8 @@ def repair():
     with locked():
         idx = load()
         ref = {os.path.normcase(e["xml"]) for e in idx.values() if e.get("xml")}
-        ids = {hashlib.md5(key(entry_path(sk, q)).encode()).hexdigest()[:8]: q for q in sk["vis"]}
+        ids = {hashlib.md5(k.encode()).hexdigest()[:8]: q for q in sk["vis"]       # name part: md5 of the key
+               for k in (key(entry_path(sk, q)), os.path.normcase(os.path.realpath(entry_path(sk, q))))}  # or older
         n = 0
         for fn in sorted(os.listdir(XMLDIR)) if os.path.isdir(XMLDIR) else []:
             p = os.path.join(XMLDIR, fn)
@@ -754,7 +827,7 @@ def recard():
         for k, e in idx.items():
             if e.get("xml") and os.path.exists(e["xml"]):
                 e["card"] = make_card(e["xml"])
-                e.setdefault("path", k)
+                e.setdefault("path", os.path.join(SRC, k) if not os.path.isabs(k) else k)
         save(idx)
     print(f"{sum(1 for e in idx.values() if e.get('card'))} cards")
 
@@ -766,8 +839,8 @@ def listing():
 
 
 # ---------------------------------------------------------------- CLI
-FLAGS_WITH_VALUE = {"-n", "-d", "--frame", "--xml"}
-FLAGS = {"-s", "--all", "--frames", "--full", "--remove"}
+FLAGS_WITH_VALUE = {"-n", "-d", "--frame", "--xml", "--backend", "--dir", "--max-tokens"}
+FLAGS = {"-s", "--all", "--frames", "--full", "--remove", "--with-callers"}
 
 
 def main(argv):
@@ -775,8 +848,17 @@ def main(argv):
     from . import query as Q
     with contextlib.suppress(AttributeError, ValueError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    cmds = {"check": (lambda p, o: check(p), 1, 999), "update": (lambda p, o: update(*p), 2, 2),
-            "seed": (lambda p, o: seed(*p), 2, 2), "ackdeps": (lambda p, o: ackdeps(p), 1, 999),
+    def upd(p, o):
+        if "--dir" in o:
+            if p:
+                sys.exit("update --dir <folder> takes no other arguments")
+            return update_dir(o["--dir"], o.get("--backend"))
+        if len(p) != 2:
+            sys.exit("update needs <vi> <aixml>, or --dir <folder>")
+        update(*p, backend=o.get("--backend"))
+    cmds = {"check": (lambda p, o: check(p, bool(o.get("--with-callers"))), 1, 999), "update": (upd, 0, 2),
+            "seed": (lambda p, o: seed(*p, backend=o.get("--backend")), 2, 2),
+            "ackdeps": (lambda p, o: ackdeps(p), 1, 999),
             "show": (lambda p, o: show(*p), 1, 1), "semdiff": (lambda p, o: print(diff_report(*p)), 2, 2),
             "skeleton": (lambda p, o: skeleton("--full" if o.get("--full") else ""), 0, 0),
             "repair": (lambda p, o: repair(), 0, 0), "recard": (lambda p, o: recard(), 0, 0),
@@ -804,10 +886,30 @@ def main(argv):
         else:
             pos.append(a)
             i += 1
-    for a in ("-n", "-d"):
+    for a in ("-n", "-d", "--max-tokens"):
         if a in opts and not opts[a].isdigit():
             sys.exit(f"{a} needs a number")
     if not lo <= len(pos) <= hi:
         sys.exit(f"{argv[1]} needs {lo}{'' if lo == hi else '-' + str(hi)} argument(s), got {len(pos)} "
                  f"(quote names with spaces; run without arguments for help)")
-    fn(pos, opts)
+    if "--max-tokens" not in opts:
+        fn(pos, opts)
+        return
+    buf = io.StringIO()                                # whole lines up to the budget, ~4 characters per token
+    try:
+        with contextlib.redirect_stdout(buf):
+            fn(pos, opts)
+    finally:
+        text = buf.getvalue()
+        lines, budget, out = text[:-1].split("\n") if text.endswith("\n") else text.split("\n"), \
+            int(opts["--max-tokens"]) * 4, []
+        for line in lines if text else []:
+            if len(line) + 1 > budget:
+                break
+            out.append(line)
+            budget -= len(line) + 1
+        if out:
+            print("\n".join(out))
+        if text and len(out) < len(lines):
+            print(f"-- showing {len(out)} of {len(lines)} lines (--max-tokens {opts['--max-tokens']}, "
+                  f"~4 characters per token)")

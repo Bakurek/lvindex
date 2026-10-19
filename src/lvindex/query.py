@@ -2,6 +2,7 @@
 They never touch LabVIEW or the project; they may refresh skeleton.json and rebuild outdated cards in index.json."""
 import os
 import re
+import xml.etree.ElementTree as ET
 
 from . import cache as V
 from . import cards as K
@@ -91,6 +92,13 @@ def reach(sk, callee, kinds):
             out.add(callee)
     out.discard(None)
     return out
+
+
+def by_name(sk, q):
+    """VIs whose diagram holds q's file name as a string but do not call it statically (heuristic: a call by name
+    or by reference, or just a mention)."""
+    leaf = q.split(":")[-1].lower()
+    return sorted(c for c, v in sk["vis"].items() if c != q and leaf in (x.lower() for x in v.get("byname", [])))
 
 
 def polys(sk):
@@ -232,9 +240,13 @@ def callers(p, o):
                     names = sorted(x.split(":")[0] if x.split(":")[-1] == fn and ":" in x else x for x in r)
                     note = f"  (runs: {', '.join(names)})"
                 rows.append(f"{cq}{V.mark(sk, cq)} -> {callee} [{'/'.join(kinds)}]{note}")
+    named = sorted({c for q in T if q in sk["vis"] for c in by_name(sk, q)})
     if not rows:
-        print("  no callers in the skeleton (top-level, called by reference / by name, or unused)")
+        print("  no static callers in the skeleton (top-level, called by reference / by name, or unused)")
     capped(sorted(rows), n, "callers")
+    if named:
+        print(f"  by name? (its file name is a string in their diagram, heuristic): {', '.join(named[:12])}"
+              + (f" +{len(named) - 12}" if len(named) > 12 else ""))
 
 
 def calls(p, o):
@@ -390,8 +402,12 @@ def card(p, o):
         return
     if "--xml" in o:
         fx = K.frame_xml(e["xml"], o["--xml"])
+        if not fx:                                     # any other case of the VI whose selector matches
+            t = o["--xml"].lower()
+            fx = [("case (not a handler frame)", K.unesc(f.get("selector")), ET.tostring(f, encoding="unicode"))
+                  for f in ET.parse(e["xml"]).getroot().iter("CaseFrame") if t in K.unesc(f.get("selector")).lower()]
         if not fx:
-            print(f"no handler frame matching '{o['--xml']}'")
+            print(f"no handler frame or case matching '{o['--xml']}'")
         for k, n_, x in fx:
             print(f"== [{n_}] {k}, {len(x)} chars\n{x}")
         return
@@ -473,6 +489,10 @@ def ctx(p, o):
         for x, called in path:                     # called = how x calls the next VI of the chain
             parts.append(x + (frame_of(x, called) if called and handler_vi(cm, x) else ""))
         print("    " + " > ".join(parts))
+    named = by_name(sk, q)
+    if named:
+        print(f"  by name? (file name is a string in their diagram, heuristic): {', '.join(named[:8])}"
+              + (f" +{len(named) - 8}" if len(named) > 8 else ""))
     callees, hid = [], 0
     for callee, kinds in sorted(v["calls"].items()):
         if hidden_call(sk, q, callee):
@@ -560,6 +580,168 @@ def msgs(p, o):
     print(f"-- handlers with a current card: {', '.join(exported) or '-'}"
           + (f"; actor entry VIs without a current card: {', '.join(missing)}" if missing else "")
           + f"; {len(cur)} cards in total - senders in unexported VIs are missing")
+
+
+# ---------------------------------------------------------------- path
+def edges(sk, cm):
+    """{vi: [(next vi, how)]}: calls with dispatch expanded, plus message edges from current cards ([messages] +
+    [actors]): sender -> entry VI of the actor owning the queue."""
+    out = {}
+    for x, v in sk["vis"].items():
+        for callee, kinds in v["calls"].items():
+            for t in reach(sk, callee, kinds):
+                out.setdefault(x, []).append((t, "/".join(kinds)))
+    if K.MSG is not None and actors(sk):
+        launch = launchers(sk)
+        for x, (c, stale) in cm.items():
+            for s in [] if stale else c["sends"]:
+                m = re.match(r"(.+?)(?:\[.+\])? -> (.+)$", s)
+                own = owner(sk, x, m.group(2), launch) if m else None
+                a = re.sub(r" \((launcher of|by name).*\)$", "", own or "")
+                if a and f"{a}:{ENTRY}" in sk["vis"]:
+                    out.setdefault(x, []).append((f"{a}:{ENTRY}", f"msg {m.group(1)}"))
+    return {x: list(dict.fromkeys(e)) for x, e in out.items()}
+
+
+def path(p, o):
+    sk = V.skel()
+    a, b = resolve_q(sk, p[0]), resolve_q(sk, p[1])
+    if not a or not b:
+        return
+    g, n = edges(sk, V.card_map(sk)), num(o, "-n", 3)
+    prev, frontier, depth = {a: []}, [a], 0
+    while frontier and b not in prev and depth < 25:           # BFS, all shortest predecessors per VI
+        nxt = {}
+        for x in frontier:
+            for t, how in g.get(x, []):
+                if t not in prev:
+                    nxt.setdefault(t, []).append((x, how))
+        prev.update(nxt)
+        frontier, depth = list(nxt), depth + 1
+    msg = K.MSG is not None and bool(actors(sk))
+    if b not in prev:
+        print(f"no call{' or message' if msg else ''} path from {a} to {b} "
+              + (f"within {depth} hops" if frontier else "in the skeleton")
+              + " (calls by reference / by name are not followed)")
+        return
+    paths = []
+
+    def back(x, tail):
+        if len(paths) >= n:
+            return
+        if x == a:
+            paths.append(tail)
+            return
+        for px, how in prev[x]:
+            back(px, [(px, how)] + tail)
+    back(b, [])
+    print(f"== {a} -> {b}: shortest {depth} hop{'s' if depth != 1 else ''}, {len(paths)} path(s) shown"
+          + (" (message hops from current cards)" if msg else ""))
+    for pth in paths:
+        print("  " + "".join(f"{x} -[{how}]-> " for x, how in pth) + b)
+
+
+# ---------------------------------------------------------------- diff between git revisions
+SRC_EXT = (".vi", ".vim", ".ctl", ".lvclass", ".lvlib")
+
+
+def git(root, *a, data=None):
+    import subprocess
+    r = subprocess.run(["git", "-C", root, *a], input=data, capture_output=True)
+    if r.returncode:
+        sys_exit = r.stderr.decode("utf-8", "replace").strip().splitlines()
+        raise RuntimeError(sys_exit[-1] if sys_exit else f"git {a[0]} failed")
+    return r.stdout
+
+
+def tree(root, prefix, ref):
+    """{path relative to the repository: blob id} of the source files under prefix at ref (None = working tree)."""
+    if ref is not None:
+        out = {}
+        for rec in git(root, "ls-tree", "-r", "-z", ref, "--", prefix or ".").split(b"\0"):
+            meta, _, p = rec.partition(b"\t")
+            p = p.decode("utf-8", "replace")
+            inner = p[len(prefix) + 1:] if prefix else p               # skip folders count below src only
+            if p.lower().endswith(SRC_EXT) and not set(inner.lower().split("/")[:-1]) & set(CFG["skip"]):
+                out[p] = meta.split()[2].decode()
+        return out
+    files = []
+    for d, ds, fs in os.walk(os.path.join(root, prefix)):
+        ds[:] = [x for x in ds if x.lower() not in CFG["skip"] and x != ".git"]
+        files += [os.path.relpath(os.path.join(d, f), root).replace(os.sep, "/") for f in fs if f.lower().endswith(SRC_EXT)]
+    ids = git(root, "hash-object", "--stdin-paths", data="\n".join(files).encode()).decode().split() if files else []
+    return dict(zip(files, ids))
+
+
+def facts(root, path, blob, tmp):
+    """Skeleton facts of one file version (None when it does not exist there)."""
+    if blob is None:
+        return None
+    if path.lower().endswith((".lvclass", ".lvlib")):
+        text = git(root, "cat-file", "blob", blob).decode("utf-8-sig", "replace")
+        parents = re.findall(r'<Item Name="([^"]+)" Type="Parent"', text)
+        members = re.findall(r'<Item Name="([^"]+)" Type="VI"', text)
+        return {"parents": set(parents), "members": set(members), "private data": {S.private_fp(text) or "-"}}
+    p = os.path.join(tmp, blob + "_" + os.path.basename(path))
+    with open(p, "wb") as f:
+        f.write(git(root, "cat-file", "blob", blob))
+    try:
+        if path.lower().endswith(".ctl"):
+            info = S.scan_ctl(p)
+            return {"typedefs used": set(info["deps"]), "content (any resave)": {info["sha256"][:12]}}
+        info = S.scan_vi(p, V.TAG_RE)
+    except Exception as ex:                                     # corrupt file, LFS pointer ...: like build()
+        return {"unreadable": {str(ex)[:60]}}
+    return {"calls": set(info["calls"]), "typedefs / classes": set(info["deps"]),
+            K.LABEL + " literals": set(info["syms"]), "connector pane": {info["pane"] or "-"},
+            "by name?": set(info["byname"])}
+
+
+def diff(p, o):
+    import tempfile
+    sk = V.skel()
+    try:
+        root = git(sk["src"], "rev-parse", "--show-toplevel").decode().strip()
+    except (RuntimeError, OSError) as ex:
+        print(f"no git repository for {sk['src']}: {ex}")
+        return
+    try:
+        prefix = os.path.relpath(os.path.realpath(sk["src"]), os.path.realpath(root)).replace(os.sep, "/")
+    except ValueError:                                         # another drive (junction): not inside the repository
+        print(f"{sk['src']} is not inside the git repository {root}")
+        return
+    prefix = "" if prefix == "." else prefix
+    a, b = p[0], (p[1] if len(p) > 1 else None)
+    if a.startswith("-") or (b or "").startswith("-"):
+        print("a revision must not start with '-'")
+        return
+    try:
+        ta, tb = tree(root, prefix, a), tree(root, prefix, b)
+    except RuntimeError as ex:
+        print(f"git: {ex}")
+        return
+    names = sorted(x for x in set(ta) | set(tb) if ta.get(x) != tb.get(x))
+    print(f"== {a} -> {b or 'working tree (also untracked files)'}: {len(names)} source files differ under "
+          f"{prefix or '.'} (skeleton facts from the binaries; a layout-only VI save shows no facts)")
+    rows = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for x in names:
+            fa, fb = facts(root, x, ta.get(x), tmp), facts(root, x, tb.get(x), tmp)
+            rel = os.path.relpath(os.path.join(root, x), sk["src"])
+            if fa is None or fb is None:
+                rows.append(f"{'+' if fa is None else '-'} {rel}")
+                continue
+            ch = []
+            for k in dict.fromkeys([*fa, *fb]):
+                x0, x1 = fa.get(k, set()), fb.get(k, set())
+                if x0 != x1:
+                    if k in ("connector pane", "private data", "content (any resave)"):
+                        ch.append(f"{k} changed")
+                    else:
+                        d = [f"+{v}" for v in sorted(x1 - x0)] + [f"-{v}" for v in sorted(x0 - x1)]
+                        ch.append(f"{k}: {', '.join(d[:8])}{f' +{len(d) - 8}' if len(d) > 8 else ''}")
+            rows.append(f"~ {rel}  " + (" | ".join(ch) if ch else "(no skeleton fact changed)"))
+    capped(rows, num(o, "-n", 60), "files")
 
 
 # ---------------------------------------------------------------- tagged literals
@@ -661,4 +843,4 @@ def overview(p, o):
 
 COMMANDS = {"find": (find, 1, 1), "callers": (callers, 1, 1), "calls": (calls, 1, 1), "uses": (uses, 1, 1),
             "class": (klass, 1, 1), "unexported": (unexported, 0, 1), "card": (card, 1, 1), "ctx": (ctx, 1, 1),
-            "msgs": (msgs, 0, 1), "overview": (overview, 0, 0)}
+            "msgs": (msgs, 0, 1), "overview": (overview, 0, 0), "path": (path, 2, 2), "diff": (diff, 1, 2)}

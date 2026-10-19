@@ -19,6 +19,7 @@ import re
 HELP = """  keys <term>           declared keys (config files) and VIs holding them as literal, with roles
   keydrift              literals in VIs without a declared key; declared keys no VI uses"""
 API = None                                       # set by the loader before setup()
+API_VERSION = 1                                  # extension API this file was written for
 _keys = {}
 
 

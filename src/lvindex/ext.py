@@ -6,6 +6,7 @@ An extension module may define (all optional):
   setup(api)                                     called once after loading
   find(api, term) -> [lines]                     extra lines printed at the end of `find <term>`
   overview(api) -> [lines]                       extra lines (sections) printed by `overview`
+  API_VERSION = 1                                the extension API it was written for; a mismatch is refused
 `api` gives the extension its settings and read access to the index (attributes below).
 
 Trust: an extension is code from the project folder. It is loaded only when lvindex.toml lists it AND that
@@ -20,6 +21,7 @@ import os
 import sys
 import traceback
 
+API_VERSION = 1          # raised when an Api attribute an extension may use changes incompatibly (not api.V / K / S)
 _loaded = {}
 _warned = set()
 _registered = []
@@ -122,6 +124,10 @@ def load(cfg):
             mod = importlib.util.module_from_spec(spec)
             sys.modules[mname] = mod                 # dataclasses, pickle, typing need the module registered
             spec.loader.exec_module(mod)
+            want = getattr(mod, "API_VERSION", None)
+            if want is not None and want != API_VERSION:
+                raise ImportError(f"written for extension API {want}, this lvindex has API {API_VERSION} "
+                                  "(see EXTENSIONS.md)")
             mod.API = Api(name, sec, cfg)
             if hasattr(mod, "setup"):
                 mod.setup(mod.API)
