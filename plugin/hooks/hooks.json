@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "mcp__.*labview.*__lvai_convert_vis?_to_aixml",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": ["-I", "${CLAUDE_PLUGIN_ROOT}/hooks/lvindex_hook.py"],
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

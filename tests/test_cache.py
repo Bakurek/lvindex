@@ -59,7 +59,16 @@ class Cache(unittest.TestCase):
         self.assertIn("SAME", self.run_cli("check", self.vi))
         out = self.run_cli("update", self.vi, self.export("y.xml"))
         self.assertNotIn("REFUSED", out)
-        self.assertIn("XML:", out)
+        self.assertIn("NO CHANGE", out)                # same export as the cached one; SAME refreshed the entry
+        self.assertIn("UNCHANGED", self.run_cli("check", self.vi))
+
+    def test_resave_without_change_makes_the_card_current_again(self):
+        self.run_cli("update", self.vi, self.export())
+        self.write_vi(b"version 1 saved again")        # a layout-only save: the file differs, the export does not
+        self.assertIn("CHANGED", self.run_cli("check", self.vi))
+        out = self.run_cli("update", self.vi, self.export("y.xml"))
+        self.assertIn("the card is current again", out)
+        self.assertIn("UNCHANGED", self.run_cli("check", self.vi))
 
     def test_update_refused_when_saved_after_check(self):
         self.run_cli("update", self.vi, self.export())
@@ -163,6 +172,102 @@ class Cache(unittest.TestCase):
         out = self.run_cli("update", self.vi, x)                          # named explicitly: stored, mismatch shown
         self.assertIn("SELF-CHECK MISMATCH", out)
         self.assertIn("XML:", out)
+
+    def variant(self, name, timeout, folder=None):
+        """The dispatcher export with another timeout constant in frame Start."""
+        with open(EXPORT, encoding="utf-8") as f:
+            text = f.read().replace('value="100"', f'value="{timeout}"')
+        p = os.path.join(folder or self.tmp.name, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        self.t += 10
+        os.utime(p, (self.t, self.t))
+        return p
+
+    def test_update_brief_shows_the_card_delta_only(self):
+        self.assertIn("XML:", self.run_cli("update", self.vi, self.export()))
+        out = self.run_cli("update", self.vi, self.variant("y.xml", 200), "--brief")
+        self.assertIn("constants: +timeout=200, -timeout=100", out)
+        self.assertRegex(out, r"per-uid diff with wiring \d+ rows, not shown: lvindex show <vi> --diff")
+        self.assertNotIn("\n@ ", out)                  # no per-uid rows
+        self.assertNotIn("per-uid diff below", out)
+        self.assertIn("stored", out)
+        self.assertNotIn("XML:", out)
+        self.assertIn('value="200"', self.cached_xml(self.vi))
+        shown = self.run_cli("show", self.vi, "--diff")  # the old export is gone, the recorded diff is not
+        self.assertIn("+timeout=200", shown)
+        self.assertIn("\n@ ", shown)
+
+    def test_wiring_only_change_is_counted_in_brief(self):
+        self.run_cli("update", self.vi, self.export())
+        with open(EXPORT, encoding="utf-8") as f:
+            text = f.read().replace('inputs="timeout:24.value"', 'inputs="timeout:29.value"')   # rewired only
+        p = os.path.join(self.tmp.name, "w.xml")
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        self.t += 10
+        os.utime(p, (self.t, self.t))
+        out = self.run_cli("update", self.vi, p, "--brief")
+        self.assertIn("CARD DELTA: none", out)
+        self.assertRegex(out, r"per-uid diff with wiring [1-9]\d* rows, not shown")
+
+    def test_older_export_does_not_replace_a_newer_one(self):
+        old = self.variant("old.xml", 200)
+        new = self.variant("new.xml", 300)
+        self.run_cli("update", self.vi, new)
+        self.assertIn("older than the cached one", self.run_cli("update", self.vi, old))
+        self.assertIn('value="300"', self.cached_xml(self.vi))
+
+    def test_identical_export_does_not_confirm_a_card_that_fails_the_self_check(self):
+        self.stray("B.vi", b"callee")                  # the export calls B.vi, the saved file (stand-in) does not
+        x = self.export_of(self.tmp.name, "a1.xml", '  <Call target="B.vi" uid="1" uid_parent="root"/>\n',
+                           vi_name="A.vi")
+        self.assertIn("SELF-CHECK MISMATCH", self.run_cli("update", self.vi, x))
+        self.write_vi(b"changed outside LabVIEW")
+        self.assertIn("CHANGED", self.run_cli("check", self.vi))
+        x2 = self.export_of(self.tmp.name, "a2.xml", '  <Call target="B.vi" uid="1" uid_parent="root"/>\n',
+                            vi_name="A.vi")             # the same export again, from LabVIEW memory
+        out = self.run_cli("update", self.vi, x2)
+        self.assertIn("NO CHANGE", out)
+        self.assertIn("NOT confirmed", out)
+        self.assertIn("CHANGED", self.run_cli("check", self.vi))
+
+    def test_update_dir_is_brief_unless_diff(self):
+        self.run_cli("update", self.vi, self.export())
+        d = os.path.join(self.tmp.name, "e1")
+        os.makedirs(d)
+        self.variant(self.mcp_name(self.vi), 200, d)
+        out = self.run_cli("update", "--dir", d)
+        self.assertIn("+timeout=200", out)
+        self.assertNotIn("\n@ ", out)
+        d2 = os.path.join(self.tmp.name, "e2")
+        os.makedirs(d2)
+        self.variant(self.mcp_name(self.vi), 300, d2)
+        out = self.run_cli("update", "--dir", d2, "--diff")
+        self.assertIn("+timeout=300", out)
+        self.assertIn("\n@ ", out)
+        self.assertIn("XML:", out)
+
+    def test_update_of_an_already_stored_export_shows_the_delta_recorded_then(self):
+        self.run_cli("update", self.vi, self.export())
+        self.run_cli("update", self.vi, self.variant("y.xml", 200), "--brief")    # e.g. stored by the hook
+        out = self.run_cli("update", self.vi, self.variant("z.xml", 200))          # the same export again
+        self.assertIn("NO CHANGE", out)
+        self.assertIn("not a new change", out)
+        self.assertIn("constants: +timeout=200, -timeout=100", out)
+
+    def test_brief_delta_is_capped_and_keeps_not_compared_rows(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(HERE), "src"))
+        os.environ["LVINDEX_PROJECT"] = self.proj
+        try:
+            from lvindex import cache
+        finally:
+            sys.path.pop(0)
+        rows = ["CARD DELTA (...):"] + [f"  ~ frame [F{i}]: " + "x" * 80 for i in range(40)] + ["  ? constants not compared"]
+        out = cache.brief_delta("\n".join(rows))
+        self.assertLess(len(out), cache.BRIEF_CHARS + 300)
+        self.assertIn("more rows not shown", out)
+        self.assertTrue(out.endswith("  ? constants not compared"))
 
     def test_unknown_command_and_option_are_short_and_point_at_an_upgrade(self):
         out = self.run_cli("nosuch")

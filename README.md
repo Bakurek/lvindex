@@ -1,7 +1,22 @@
 # lvindex
 
-An offline index and review cache for LabVIEW projects, built to let an AI assistant (or a human) reason about a
-program's logic without exporting and reading whole VIs again and again.
+A companion to [labview-mcp](https://github.com/Zuehlke/labview-mcp) for AI assistants working on LabVIEW
+projects. labview-mcp lets an assistant export a VI to AIXML and edit it; an export of one VI is often tens of
+kilobytes, and an assistant that reads exports to find its way around a project loads many of them into its
+context, again in every new session. lvindex keeps that out of the context:
+
+- it answers structural questions (who calls this, what does this VI use, which class overrides it) from an
+  index of the binaries, without any export; message and event questions (where is this message handled) come
+  from the cards of the VIs exported so far;
+- it stores each export as a compact card in a cache (the plugin's hook does this after every labview-mcp
+  export, see below), so later sessions read the card, or the XML of one frame, instead of the whole export;
+- after an edit `check` says whether a VI changed at all, and `update` shows what changed against the cached
+  export (CARD DELTA, without wiring), so a changed VI is rarely read in full.
+
+The aim is fewer AIXML tokens in the assistant's context than with labview-mcp alone, per task and across
+sessions. So far it has been measured per lookup (table below), not per session.
+
+What it consists of:
 
 - **Skeleton** of the whole project, read straight from the `.vi` / `.ctl` / `.lvclass` binaries. LabVIEW is not
   needed for this part. It records:
@@ -31,6 +46,9 @@ Measured on a ~460-VI project (tokens approximated as characters / 4, what an as
 
 The grep comparison flatters grep: it ran only over the exported fifth of the project, and grep resolves neither
 dynamic dispatch nor message routing. Median over these 7 tasks: 14x.
+
+These are single lookups compared with reading the export they replace, not whole sessions: a session that
+starts with no cards and exports anyway gains little until the cache has grown.
 
 The format knowledge (RSRC link records, AIXML structure) is reverse-engineered and not documented by NI. Treat the
 output as facts extracted with care, not as a guarantee. Heuristic parts are labelled as such in the output.
@@ -117,9 +135,17 @@ overwritten; `repair` then restores the entries from `xml\`.
 
 ## Using it from an AI assistant
 
-[skills/lvindex/SKILL.md](skills/lvindex/SKILL.md) is the usage contract for an assistant: index before reading a
-VI, callers before editing, check / export / update and the CARD DELTA after an edit. The skill calls only
-`lvindex`, so the command must be on PATH. Setup for Claude Code:
+The Claude Code plugin in [plugin/](plugin) has two parts:
+- the skill [plugin/skills/lvindex/SKILL.md](plugin/skills/lvindex/SKILL.md), the usage contract for an assistant:
+  index before reading a VI, callers before editing, check / export / update and the CARD DELTA after an edit;
+- a PostToolUse hook ([plugin/hooks/](plugin/hooks)): after every labview-mcp `lvai_convert_vi(s)_to_aixml` call it
+  stores the exports with `lvindex update --dir` (brief output) and hands that output to Claude, so the cache grows
+  with every export whether or not the assistant remembers to store it. It acts only on VIs of a project where
+  lvindex is already in use (a `.claude\lvindex.toml` or a `.index` cache above the VI); other projects, vi.lib and
+  user.lib are left alone. It needs `python` on PATH and never blocks a tool call.
+
+The skill and the hook call only `lvindex`, so the command must be on PATH (the hook also takes `LVINDEX_CLI`, the
+path of an lvindex executable or of a checkout's `lvindex.py`). Setup for Claude Code:
 
 1. Install the command:
 
@@ -136,7 +162,7 @@ VI, callers before editing, check / export / update and the CARD DELTA after an 
    lvindex does not know, the error says the command is older and how to upgrade it.
    To work on lvindex itself, `pipx install -e C:\path\to\lvindex` runs the checkout, so edits apply without a
    reinstall.
-2. Add the repository as a plugin marketplace and install the skill from it, inside Claude Code:
+2. Add the repository as a plugin marketplace and install the plugin (skill and hook) from it, inside Claude Code:
 
    ```text
    /plugin marketplace add Bakurek/lvindex
@@ -147,9 +173,10 @@ VI, callers before editing, check / export / update and the CARD DELTA after an 
    The skill then shows up as `lvindex:lvindex`. The plugin has no version string, so every commit of this
    repository counts as a new version: `claude plugin marketplace update lvindex`, then
    `claude plugin update lvindex@lvindex` fetches it (the second alone does not refresh the marketplace), or turn on
-   auto-update for the `lvindex` marketplace under `/plugin` > Marketplaces. Remove a hand copy of `skills\lvindex` from
-   `%USERPROFILE%\.claude\skills\` if you made one earlier, or Claude sees the skill twice. Without the plugin, copy
-   the `skills\lvindex` folder there (all projects) or to the project's `.claude\skills\`.
+   auto-update for the `lvindex` marketplace under `/plugin` > Marketplaces. Remove a hand copy of the skill from
+   `%USERPROFILE%\.claude\skills\lvindex` if you made one earlier, or Claude sees the skill twice. Without the plugin,
+   copy the `plugin\skills\lvindex` folder there (all projects) or to the project's `.claude\skills\`; a hand copy has
+   no hook, so the skill's own rule (store every export with `update`) is then all that grows the cache.
 3. Allow the command, so Claude Code does not ask before every call. In `%USERPROFILE%\.claude\settings.json` (all
    projects) or a project's `.claude\settings.json`:
 

@@ -1,0 +1,5 @@
+{
+  "name": "lvindex",
+  "description": "Has Claude read a LabVIEW project through lvindex instead of whole AIXML exports, and stores every labview-mcp export as a card in the project's lvindex cache (PostToolUse hook).",
+  "author": {"name": "Patryk Jankowski", "url": "https://github.com/Bakurek"}
+}

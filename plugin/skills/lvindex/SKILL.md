@@ -1,6 +1,6 @@
 ---
 name: lvindex
-description: Use lvindex before reading, editing or reviewing VIs of a LabVIEW project that has a .claude\lvindex.toml or a single .lvproj. It answers "what does this VI do, who calls it, what changed" from an offline index instead of whole AIXML exports, and checks after an edit that only the intended part of a VI changed.
+description: Use lvindex before reading, editing or reviewing VIs of a LabVIEW project that has a .claude\lvindex.toml or a single .lvproj. It answers "what does this VI do, who calls it, what changed" from an offline index instead of whole AIXML exports, keeps every export as a card for later sessions, and checks after an edit that only the intended part of a VI changed.
 ---
 
 # Working on a LabVIEW project with lvindex
@@ -15,6 +15,27 @@ do not look for a checkout. `lvindex` without arguments prints the full manual. 
 Its output is facts extracted from the files. Parts marked as heuristic (`VIM?`, `sym?`, dispatcher frames without
 a `[messages]` section) are guesses; say so when you pass them on.
 
+## Grow the cache while you work
+
+The aim is that a VI exported once is not loaded whole into a context again: its card answers later questions about
+the program's logic, in this session and in every later one, in less time and fewer tokens. So every export goes
+into the cache, not only exports after an edit:
+- Export only after `card` / `ctx` / `callers` could not answer, or after an edit; only the VIs the task needs,
+  never a whole project unless the user asks for it. The VI must be saved in LabVIEW (`check` first after an edit).
+- Export with labview-mcp `lvai_convert_vis_to_aixml` (refresh=true) to files in a fresh scratch folder per batch;
+  never with `returnContent` and never print an export into the context.
+- With the lvindex plugin a hook stores every such export by itself: a message starting with `lvindex hook:` follows
+  the export tool's answer. It holds the CARD DELTA against the export it replaced - after an edit, that is the
+  delta to check; `lvindex show <vi> --diff` prints it in full, with the per-uid diff (wiring). Do not run `update`
+  for that export again (it would only print NO CHANGE). A hook message that starts with "NOT stored cleanly" lists
+  the exports that need action first.
+- No `lvindex hook:` message: run `update --dir <folder> --backend <name>` yourself (`<name>` = the `backend` the
+  export tool answered, leave it out when none). It prints a short CARD DELTA per VI; `--diff` adds the per-uid
+  diff with wiring.
+- Then work from `card <vi>` / `card <vi> --frame NAME` / `card <vi> --xml NAME`, not from the export file.
+- `SELF-CHECK MISMATCH` after storing: the export came from unsaved edits and the card is not reliable; save,
+  export again.
+
 ## Before reading a VI
 
 Read the index first and the VI's AIXML only for what the index cannot answer:
@@ -22,7 +43,8 @@ Read the index first and the VI's AIXML only for what the index cannot answer:
 2. `ctx <vi>`: who reaches it from the entry points, through which handler frames, and what it uses.
 3. `card <vi> --frames`, then `card <vi> --frame NAME` for one handler with its callee cards, and
    `card <vi> --xml NAME` for the XML of the frames whose name contains NAME.
-4. The whole export only when the question is about wiring the card does not show.
+4. The whole export only when the question is about wiring that `card --xml NAME` does not show; it is stored like
+   any export (see above), so the next question about this VI does not need it.
 
 To find your way around: `overview` (entry points, classes, message loops), `find <term>` (literals, messages,
 events, calls; `-s` also free text), `msgs [name]` (sender -> queue -> handler, when configured), `path <a> <b>`
@@ -53,8 +75,13 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
 3. Export the CHANGED / NEW VIs with labview-mcp `lvai_convert_vis_to_aixml` (refresh=true) into a scratch folder.
    A class member with class-typed terminals cannot be regenerated through AIXML at all (both labview-mcp backends
    refuse it); an edit of such a VI is the user's, in LabVIEW.
-4. `update <vi> <export.xml> --backend <name>` for each, or `update --dir <folder> --backend <name>` for all exports
-   in a folder; `<name>` is the `backend` the export tool answered (e.g. grpc). With `--dir`, of several exports of
+4. With the plugin's hook the exports are already stored and the `lvindex hook:` message holds the CARD DELTA (cut
+   to about 1200 characters): read it there. Otherwise `update <vi> <export.xml> --backend <name>` for each (full
+   output: CARD DELTA and per-uid diff), or `update --dir <folder> --backend <name>` for all exports in a folder
+   (brief; add `--diff` for the full output); `<name>` is the `backend` the export tool answered (e.g. grpc).
+   `NO CHANGE` = this export is identical to the cached one (nothing stored); `NOT confirmed` after it = the VI file
+   changed but the export did not: save the VI in LabVIEW and export again. `REFUSED ... older than the cached one` =
+   a newer export is already stored. With `--dir`, of several exports of
    one VI only the newest is applied, the others print `SKIPPED`; `NO UNIQUE VI` (a name that fits several VIs) and
    `NOT STORED` (matched by name only, SELF-CHECK MISMATCH) store nothing - run `update <vi> <xml>` for those after
    checking which VI the export belongs to. Read the CARD DELTA first. It matches by name, not by uid, so it stays

@@ -17,8 +17,12 @@ Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memo
                         refuses if the VI was saved during export. The diff: CARD DELTA (terminals, calls, primitives,
                         constants, cases, messages, events - for the VI and per handler frame, matched by name, so also
                         valid when a regeneration changed every uid; no wiring), then the semantic diff per stable uid
-                        (+ - ~, wires resolved)
-  update --dir <folder> the same for every export in a folder, matched to its VI by the path hash in labview-mcp's
+                        (+ - ~, wires resolved). --brief: CARD DELTA cut to about 1200 characters, the per-uid diff
+                        only counted (`show <vi> --diff` prints both later). An export identical to the cached one
+                        (e.g. stored by the plugin hook) prints NO CHANGE and stores nothing; an export older than
+                        the cached one is REFUSED
+  update --dir <folder> the same, brief (--diff = full output), for every export in a folder, matched to its VI by
+                        the path hash in labview-mcp's
                         file name (<VI>.<8 hex>.xml), else by the name in the export; a name that fits several VIs
                         (same-name copies outside any class) is refused, and a name-only match with SELF-CHECK
                         MISMATCH is not stored
@@ -57,7 +61,7 @@ Call kinds: IUVI static, DyOM dynamic dispatch, CPM Call Parent Method, PUPV pol
 Limits: roles, messages and events exist only for exported VIs; names built at run time are invisible to literals;
   VIs called by reference or by name have no callers; .llb / .lvlibp contents are not read.
 
-Maintenance: ackdeps <vi>... | show <vi> | semdiff <a.xml> <b.xml> | skeleton [--full] | repair | recard | list
+Maintenance: ackdeps <vi>... | show <vi> [--diff] | semdiff <a.xml> <b.xml> | skeleton [--full] | repair | recard | list
 Extensions: trust [--remove] allows the [extensions] of this lvindex.toml to run (once per project and user)
 Store: the project's cache folder (default <project root>\\.index, lvindex.toml `cache` overrides):
   index.json (keys = VI paths relative to src, export names relative to xml\\), xml\\, skeleton.json,
@@ -637,6 +641,32 @@ def card_delta(old_path, new_path):
     return "\n".join([f"CARD DELTA (matched by name, independent of uids; wiring not compared){tail}:"] + rows + note)
 
 
+BRIEF_CHARS = 1200        # CARD DELTA rows printed by a brief update, per VI
+
+
+def brief_delta(delta):
+    """A CARD DELTA cut to whole rows of about BRIEF_CHARS for brief output; the "? not compared" rows always stay."""
+    rows = delta.split("\n")
+    keep, notes = [r for r in rows if not r.startswith("  ?")], [r for r in rows if r.startswith("  ?")]
+    out, n = [], 0
+    for i, r in enumerate(keep):
+        if out and n + len(r) > BRIEF_CHARS:
+            out.append(f"  ... {len(keep) - i} more rows not shown")
+            break
+        out.append(r)
+        n += len(r) + 1
+    return "\n".join(out + notes)
+
+
+def export_hash(aixml):
+    """(stripped text, 8-hex content hash) of an export, as store() names the cached file."""
+    with open(aixml, encoding="utf-8") as f:
+        text = f.read()
+    for p in STRIP:
+        text = re.sub(p, "", text)
+    return text, hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+
+
 def diff_report(old_path, new_path):
     """Card delta first (short, survives regeneration), then the per-uid semantic diff."""
     d = semdiff(old_path, new_path)
@@ -731,17 +761,15 @@ def self_check(sk, q, xml_path):
     return ("SELF-CHECK MISMATCH - export from unsaved edits, or a skeleton heuristic broke: " + "; ".join(diffs) + note)
 
 
-def store(idx, vi, aixml, vi_meta, backend=None, check=None):
+def store(idx, vi, aixml, vi_meta, backend=None, check=None, delta=None, uid=None):
     """Write the stripped export under a content-unique name (a crash before the index save keeps the old XML
     valid) and update the index entry (backend: the AIXML backend that made the export, None = not given; check: the
-    SELF-CHECK line when the caller made it already). Returns (new xml, previous xml)."""
+    SELF-CHECK line when the caller made it already; delta / uid: the CARD DELTA and the per-uid diff against the
+    export it replaces, kept because that export is deleted: `show <vi> --diff` prints them). Returns (new xml,
+    previous xml)."""
     os.makedirs(XMLDIR, exist_ok=True)
-    with open(aixml, encoding="utf-8") as f:
-        text = f.read()
-    for p in STRIP:
-        text = re.sub(p, "", text)
+    text, h = export_hash(aixml)
     name_ = os.path.splitext(os.path.basename(vi))[0]
-    h = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
     out = os.path.join(XMLDIR, f"{name_}.{hashlib.md5(key(vi).encode()).hexdigest()[:8]}.{h}.xml")
     with open(out + ".tmp", "w", encoding="utf-8") as f:
         f.write(text)
@@ -752,7 +780,9 @@ def store(idx, vi, aixml, vi_meta, backend=None, check=None):
     prev = idx.get(key(vi), {}).get("xml")
     idx[key(vi)] = {**vi_meta, "xml": out, "exported_at": t, "path": os.path.realpath(vi), "card": make_card(out),
                    "deps_fp": dep_baseline(sk, q, t) if q else {}, "deps_v": DEPS_V,
-                   "backend": backend or idx.get(key(vi), {}).get("backend")}
+                   "backend": backend or idx.get(key(vi), {}).get("backend"),
+                   "delta": {"at": time.time(), "text": delta[:4000] if delta else None,
+                             "uid": uid[:12000] if uid else None}}
     print(check or self_check(sk, q, out))
     return out, prev
 
@@ -763,9 +793,12 @@ def drop_old(prev, out):
             os.remove(prev)
 
 
-def update(vi, aixml, backend=None, by_name=False):
+def update(vi, aixml, backend=None, by_name=False, brief=False):
     """by_name: the export was matched to the VI by its name only (update --dir): a SELF-CHECK MISMATCH then stores
-    nothing, since the export may belong to another VI of that name."""
+    nothing, since the export may belong to another VI of that name. brief: the CARD DELTA cut to BRIEF_CHARS and no
+    per-uid diff (for exports stored to grow the cache, e.g. by the plugin hook). An export identical to the cached
+    one (already stored, e.g. by the hook) is not compared with itself: the CARD DELTA from when it was stored is
+    shown instead."""
     with locked():
         vi = find_vi(skel(), vi)
         if vi is None:
@@ -783,17 +816,49 @@ def update(vi, aixml, backend=None, by_name=False):
             print("NOT STORED: matched by name only and the export does not fit the saved file - if it is this VI's "
                   "export, save the VI in LabVIEW and export again, or store it with update <vi> <xml>")
             return
-        if e.get("xml") and os.path.exists(e["xml"]):
+        cached = e.get("xml") if e.get("xml") and os.path.exists(e["xml"]) else None
+        with open(cached, encoding="utf-8") if cached else contextlib.nullcontext() as f:
+            same = cached is not None and f.read() == export_hash(aixml)[0]
+        if same:
+            d = e.get("delta") or {}
+            at = time.strftime("%Y-%m-%d %H:%M", time.localtime(e.get("exported_at", 0)))
+            print(f"NO CHANGE: this export is identical to the cached one (exported {at}); nothing stored.")
+            if any(e.get(k) != now[k] for k in now) or e.get("pending"):
+                chk = self_check(skel(), qname(skel(), vi), aixml)
+                print(chk)
+                if chk.startswith("SELF-CHECK ok"):        # saved since, the export fits the file on disk
+                    e.update(now)
+                    e.pop("pending", None)
+                    save(idx)
+                    print("The VI file was saved since without a change visible in the export: the card is current "
+                          "again.")
+                else:
+                    print("The card is NOT confirmed for the VI file on disk (changed outside LabVIEW, or the export "
+                          "came from LabVIEW memory): save the VI in LabVIEW and export again.")
+            elif d.get("text"):
+                print(f"(the CARD DELTA recorded when it was stored, {at} - not a new change):\n{d['text']}")
+            return
+        if cached and os.stat(aixml).st_mtime < e.get("exported_at", 0):
+            print("REFUSED: this export is older than the cached one - export again if the VI changed")
+            return
+        delta = uid = None
+        if cached:
             if backend and e.get("backend") and e["backend"] != backend:
                 print(f"NOTE: the cached export came from backend {e['backend']}, this one from {backend} - "
                       f"differences below may come from the backends, not from the VI")
-            print(diff_report(e["xml"], aixml))
+            delta, uid = card_delta(cached, aixml), semdiff(cached, aixml)
+            if brief:
+                print(brief_delta(delta.replace("(per-uid diff below)", "(per-uid diff not shown)")))
+                n = sum(1 for r in uid.split("\n") if r.startswith("  "))
+                print(f"(brief: per-uid diff with wiring {f'{n} rows, not shown: lvindex show <vi> --diff' if n else 'empty'})")
+            else:
+                print(delta + "\n" + (uid if uid else "NO LOGICAL DIFF"))
         else:
-            print("NO CACHED VERSION - read the full export")
-        out, prev = store(idx, vi, aixml, now, backend, check)
+            print("NEW CARD (first export of this VI)" if brief else "NO CACHED VERSION - read the full export")
+        out, prev = store(idx, vi, aixml, now, backend, check, delta, uid)
         save(idx)
         drop_old(prev, out)
-        print("XML:", out)
+        print("stored" if brief else f"XML: {out}")
 
 
 def path_hash(vi):
@@ -832,9 +897,9 @@ def export_target(sk, xml_path):
     return None, None, f"{len(cand)} VIs with this name ({shown})" + (" and no path hash of one of them" if h else "")
 
 
-def update_dir(folder, backend=None):
+def update_dir(folder, backend=None, brief=True):
     """update for every export in a folder, each matched to its VI (export_target). Several exports of one VI: only
-    the newest is applied, so an older one never replaces it in the cache."""
+    the newest is applied, so an older one never replaces it in the cache. Brief by default (see update)."""
     sk = skel()
     files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".xml")) if os.path.isdir(folder) else []
     if not files:
@@ -851,7 +916,7 @@ def update_dir(folder, backend=None):
             continue
         print(f"===== {fn} -> {qname(sk, vi) if vi else f'NO UNIQUE VI ({why}) - pass it as update <vi> <xml>'}")
         if vi:
-            update(vi, p, backend, by_name=how == "name")
+            update(vi, p, backend, by_name=how == "name", brief=brief)
 
 
 def seed(vi, aixml, backend=None):
@@ -921,10 +986,20 @@ def repair():
     print(f"{n} exports adopted")
 
 
-def show(vi):
+def show(vi, diff=False):
+    """Path of the cached export; --diff: the CARD DELTA and per-uid diff recorded when it was stored."""
     vi = find_vi(skel(), vi)
-    if vi:
-        print(load().get(key(vi), {}).get("xml", "NOT EXPORTED"))
+    if not vi:
+        return
+    e = load().get(key(vi), {})
+    print(e.get("xml", "NOT EXPORTED"))
+    if diff:
+        d = e.get("delta") or {}
+        if not (d.get("text") or d.get("uid")):
+            print("(no diff recorded: first export of this VI, or stored by an older lvindex or with --diff off)")
+        for part in (d.get("text"), d.get("uid")):
+            if part:
+                print(part)
 
 
 def skeleton(opt=""):
@@ -963,7 +1038,7 @@ def listing():
 
 # ---------------------------------------------------------------- CLI
 FLAGS_WITH_VALUE = {"-n", "-d", "--frame", "--xml", "--backend", "--dir", "--max-tokens"}
-FLAGS = {"-s", "--all", "--frames", "--full", "--remove", "--with-callers"}
+FLAGS = {"-s", "--all", "--frames", "--full", "--remove", "--with-callers", "--brief", "--diff"}
 
 
 def main(argv):
@@ -975,14 +1050,15 @@ def main(argv):
         if "--dir" in o:
             if p:
                 sys.exit("update --dir <folder> takes no other arguments")
-            return update_dir(o["--dir"], o.get("--backend"))
+            return update_dir(o["--dir"], o.get("--backend"), brief=not o.get("--diff"))
         if len(p) != 2:
             sys.exit("update needs <vi> <aixml>, or --dir <folder>")
-        update(*p, backend=o.get("--backend"))
+        update(*p, backend=o.get("--backend"), brief=bool(o.get("--brief")))
     cmds = {"check": (lambda p, o: check(p, bool(o.get("--with-callers"))), 1, 999), "update": (upd, 0, 2),
             "seed": (lambda p, o: seed(*p, backend=o.get("--backend")), 2, 2),
             "ackdeps": (lambda p, o: ackdeps(p), 1, 999),
-            "show": (lambda p, o: show(*p), 1, 1), "semdiff": (lambda p, o: print(diff_report(*p)), 2, 2),
+            "show": (lambda p, o: show(*p, diff=bool(o.get("--diff"))), 1, 1),
+            "semdiff": (lambda p, o: print(diff_report(*p)), 2, 2),
             "skeleton": (lambda p, o: skeleton("--full" if o.get("--full") else ""), 0, 0),
             "repair": (lambda p, o: repair(), 0, 0), "recard": (lambda p, o: recard(), 0, 0),
             "list": (lambda p, o: listing(), 0, 0),
