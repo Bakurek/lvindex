@@ -1,0 +1,17 @@
+{
+  "name": "lvindex",
+  "description": "lvindex: offline index and review cache for LabVIEW projects, as a Claude Code skill",
+  "owner": {"name": "Patryk Jankowski", "url": "https://github.com/Bakurek"},
+  "plugins": [
+    {
+      "name": "lvindex",
+      "source": "./skills/lvindex",
+      "description": "Skill that has Claude read a LabVIEW project through lvindex instead of whole AIXML exports. Needs the lvindex command: pipx install git+https://github.com/Bakurek/lvindex",
+      "author": {"name": "Patryk Jankowski", "url": "https://github.com/Bakurek"},
+      "homepage": "https://github.com/Bakurek/lvindex",
+      "repository": "https://github.com/Bakurek/lvindex",
+      "license": "MIT",
+      "keywords": ["labview", "index", "review", "aixml"]
+    }
+  ]
+}

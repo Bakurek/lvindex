@@ -47,8 +47,9 @@ output as facts extracted with care, not as a guarantee. Heuristic parts are lab
 
 ## Quick start
 
-Install it (`pip install -e C:\path\to\lvindex` gives the `lvindex` command), or run it from the checkout
-without installing (`python -I C:\path\to\lvindex\lvindex.py ...`):
+Install it with `pipx install git+https://github.com/Bakurek/lvindex` (or `uv tool install` with the same URL;
+see [Using it from an AI assistant](#using-it-from-an-ai-assistant) for PATH and updates), or run it from a
+checkout without installing (`python -I C:\path\to\lvindex\lvindex.py ...`):
 
 ```bat
 cd C:\path\to\MyProject
@@ -114,8 +115,55 @@ overwritten; `repair` then restores the entries from `xml\`.
 ## Using it from an AI assistant
 
 [skills/lvindex/SKILL.md](skills/lvindex/SKILL.md) is the usage contract for an assistant: index before reading a
-VI, callers before editing, check / export / update and the CARD DELTA after an edit. For Claude Code copy the
-`skills\lvindex` folder to `%USERPROFILE%\.claude\skills\` (all projects) or to the project's `.claude\skills\`.
+VI, callers before editing, check / export / update and the CARD DELTA after an edit. The skill calls only
+`lvindex`, so the command must be on PATH. Setup for Claude Code:
+
+1. Install the command:
+
+   ```bat
+   pipx install git+https://github.com/Bakurek/lvindex
+   pipx ensurepath
+   ```
+
+   or `uv tool install git+https://github.com/Bakurek/lvindex` and `uv tool update-shell`. Both put `lvindex.exe`
+   into `%USERPROFILE%\.local\bin` and add that folder to the user PATH; restart Claude Code (the desktop app or the
+   terminal it runs in) so it sees the new PATH. Update with `pipx upgrade lvindex` or `uv tool upgrade lvindex`.
+   `lvindex --version` shows the installed commit, the same 12 characters the plugin's version shows in
+   `/plugin`. The command and the skill update separately: when the skill names a command or an option this
+   lvindex does not know, the error says the command is older and how to upgrade it.
+   To work on lvindex itself, `pipx install -e C:\path\to\lvindex` runs the checkout, so edits apply without a
+   reinstall.
+2. Add the repository as a plugin marketplace and install the skill from it, inside Claude Code:
+
+   ```text
+   /plugin marketplace add Bakurek/lvindex
+   /plugin install lvindex@lvindex
+   ```
+
+   or from a shell with `claude plugin marketplace add Bakurek/lvindex` and `claude plugin install lvindex@lvindex`.
+   The skill then shows up as `lvindex:lvindex`. The plugin has no version string, so every commit of this
+   repository counts as a new version: `claude plugin marketplace update lvindex`, then
+   `claude plugin update lvindex@lvindex` fetches it (the second alone does not refresh the marketplace), or turn on
+   auto-update for the `lvindex` marketplace under `/plugin` > Marketplaces. Remove a hand copy of `skills\lvindex` from
+   `%USERPROFILE%\.claude\skills\` if you made one earlier, or Claude sees the skill twice. Without the plugin, copy
+   the `skills\lvindex` folder there (all projects) or to the project's `.claude\skills\`.
+3. Allow the command, so Claude Code does not ask before every call. In `%USERPROFILE%\.claude\settings.json` (all
+   projects) or a project's `.claude\settings.json`:
+
+   ```json
+   {
+     "permissions": {
+       "allow": ["Bash(lvindex *)", "PowerShell(lvindex *)"],
+       "ask": ["Bash(lvindex *trust*)", "PowerShell(lvindex *trust*)"]
+     }
+   }
+   ```
+
+   `Bash(...)` covers the Bash tool and `PowerShell(...)` the PowerShell tool; on Windows Claude Code may use either.
+   `lvindex *` also matches a bare `lvindex` and every subcommand, including the ones that write the project's cache
+   folder (`update`, `repair`, `recard`). The `ask` rules win over `allow` and keep a prompt for `trust`, which lets a
+   project's extension code run (also for `--project X trust`, and for any other call containing "trust", such as
+   `find trust`). The fallback `python -I -m lvindex ...` matches no rule and prompts.
 
 ## Files
 

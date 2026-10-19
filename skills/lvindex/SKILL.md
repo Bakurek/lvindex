@@ -5,10 +5,12 @@ description: Use lvindex before reading, editing or reviewing VIs of a LabVIEW p
 
 # Working on a LabVIEW project with lvindex
 
-lvindex is a command line tool: `lvindex <command>` when installed, otherwise
-`python -I <lvindex checkout>\lvindex.py <command>`. Run it from inside the project folder (or pass
-`--project <folder | lvindex.toml>`). `lvindex` without arguments prints the full manual. `<vi>` is a path, a
-qualified name (`Class:File.vi`) or a unique substring of one.
+lvindex is a command line tool. Call it as `lvindex <command>` from inside the project folder; for another
+folder pass `--project <folder | lvindex.toml>` rather than `cd` there. A user's permission rule for `lvindex *`
+then allows the call without a prompt. If `lvindex` is not found, use `python -I -m lvindex <command>` (installed
+with pip); if that fails too, stop and tell the user to install it
+(`pipx install git+https://github.com/Bakurek/lvindex` or `uv tool install git+https://github.com/Bakurek/lvindex`),
+do not look for a checkout. `lvindex` without arguments prints the full manual. `<vi>` is a path, a qualified name (`Class:File.vi`) or a unique substring of one.
 
 Its output is facts extracted from the files. Parts marked as heuristic (`VIM?`, `sym?`, dispatcher frames without
 a `[messages]` section) are guesses; say so when you pass them on.
