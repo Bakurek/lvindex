@@ -5,105 +5,50 @@ description: Use lvindex before reading, editing or reviewing VIs of a LabVIEW p
 
 # Working on a LabVIEW project with lvindex
 
-lvindex is a command line tool. Call it as `lvindex <command>` from inside the project folder; for another
-folder pass `--project <folder | lvindex.toml>` rather than `cd` there. A user's permission rule for `lvindex *`
-then allows the call without a prompt. If `lvindex` is not found, use `python -I -m lvindex <command>` (installed
-with pip); if that fails too, stop and tell the user to install it
-(`pipx install git+https://github.com/Bakurek/lvindex` or `uv tool install git+https://github.com/Bakurek/lvindex`),
-do not look for a checkout. `lvindex` without arguments prints the full manual. `<vi>` is a path, a qualified name (`Class:File.vi`) or a unique substring of one.
+`lvindex <command>` from inside the project folder; for another folder pass `--project <folder | lvindex.toml>`
+instead of `cd`. Not found: `python -I -m lvindex <command>`; if that fails too, stop and tell the user to install it
+(`pipx install git+https://github.com/Bakurek/lvindex`), do not look for a checkout. `<vi>` = a path, `Class:File.vi`
+or a unique substring. `lvindex` alone prints the manual; `--max-tokens N` caps any output.
 
-Its output is facts extracted from the files. Parts marked as heuristic (`VIM?`, `sym?`, dispatcher frames without
-a `[messages]` section) are guesses; say so when you pass them on.
+The output is facts read from the files; `VIM?`, `sym?` and dispatcher frames without a `[messages]` section are
+guesses - say so when you pass them on.
 
-## Grow the cache while you work
+## Read the index before an export
 
-The aim is that a VI exported once is not loaded whole into a context again: its card answers later questions about
-the program's logic, in this session and in every later one, in less time and fewer tokens. So every export goes
-into the cache, not only exports after an edit:
-- Export only after `card` / `ctx` / `callers` could not answer, or after an edit; only the VIs the task needs,
-  never a whole project unless the user asks for it. The VI must be saved in LabVIEW (`check` first after an edit).
-- Export with labview-mcp `lvai_convert_vis_to_aixml` (refresh=true) to files in a fresh scratch folder per batch;
-  never with `returnContent` and never print an export into the context.
-- With the lvindex plugin a hook stores every such export by itself: a message starting with `lvindex hook:` follows
-  the export tool's answer. It holds the CARD DELTA against the export it replaced - after an edit, that is the
-  delta to check; `lvindex show <vi> --diff` prints it in full, with the per-uid diff (wiring). Do not run `update`
-  for that export again (it would only print NO CHANGE). A hook message that starts with "NOT stored cleanly" lists
-  the exports that need action first.
-- No `lvindex hook:` message: run `update --dir <folder> --backend <name>` yourself (`<name>` = the `backend` the
-  export tool answered, leave it out when none). It prints a short CARD DELTA per VI; `--diff` adds the per-uid
-  diff with wiring.
-- Then work from `card <vi>` / `card <vi> --frame NAME` / `card <vi> --xml NAME`, not from the export file.
-- `SELF-CHECK MISMATCH` after storing: the export came from unsaved edits and the card is not reliable; save,
-  export again.
-
-## Before reading a VI
-
-Read the index first and the VI's AIXML only for what the index cannot answer:
 1. `card <vi>`: terminals, calls, messages sent, handled cases, events.
 2. `ctx <vi>`: who reaches it from the entry points, through which handler frames, and what it uses.
-3. `card <vi> --frames`, then `card <vi> --frame NAME` for one handler with its callee cards, and
-   `card <vi> --xml NAME` for the XML of the frames whose name contains NAME.
-4. The whole export only when the question is about wiring that `card --xml NAME` does not show; it is stored like
-   any export (see above), so the next question about this VI does not need it.
+3. `card <vi> --frames`, then `--frame NAME` (one handler with its callee cards) or `--xml NAME` (the XML of the
+   matching frames only).
+4. Export a VI only for what these cannot answer.
 
-To find your way around: `overview` (entry points, classes, message loops), `find <term>` (literals, messages,
-events, calls; `-s` also free text), `msgs [name]` (sender -> queue -> handler, when configured), `path <a> <b>`
-(how a reaches b: calls with dispatch, and message hops when configured), `diff <ref> [<ref2>]` (what changed in
-the source files between git revisions, as skeleton facts - for reviewing a branch or a commit).
-Long outputs: add `--max-tokens N` to any command; it says how much it left out.
+Finding your way: `overview` (entry points, classes, message loops), `find <term>` (`-s` also free text), `msgs [name]`
+(sender -> queue -> handler), `path <a> <b>`, `diff <ref> [<ref2>]` (skeleton facts changed between git revisions).
+Markers: `(no card)` = never exported; `(card stale)` = saved after its export, do not rely on it; `(not in lvclass)`
+= stray file in a class folder.
 
-Markers: `(no card)` = never exported, `(card stale)` = saved after its export, do not rely on that card,
-`(not in lvclass)` = stray file in a class folder.
+## Before editing
 
-## Before editing a VI
+`callers <vi>` (dynamic dispatch expanded; `by name?` lines are a heuristic), `class <name>` (overrides, children,
+interfaces), `uses <typedef|class>`. VIs called by reference or by name have no static callers: never present a list
+from `callers`, `find` or `unexported` as complete for them.
 
-- `callers <vi>`: who is affected, with dynamic dispatch expanded. VIs called by reference or by name are not
-  static callers; a `by name?` line lists VIs whose diagram holds the file name as a string (heuristic). Say so
-  when the list is the basis of a decision.
-- `class <name>` before changing a method: overrides, children, interfaces.
-- `uses <typedef|class>` before changing a typedef or a class's private data.
+## Every export goes into the cache
 
-## After an edit (labview-mcp regeneration, or the user editing in LabVIEW)
+- Export only the VIs the task needs, never a whole project unless the user asks, with labview-mcp
+  `lvai_convert_vis_to_aixml` (refresh=true) to files in a fresh scratch folder; never `returnContent`, never print an
+  export into the context.
+- With the lvindex plugin a hook stores each export: a message starting with `lvindex hook:` follows; if it says
+  "NOT stored cleanly", read `review.md` before using those cards. Without it run
+  `update --dir <folder> --backend <name>` (`<name>` = the backend the export tool answered).
+- Then work from `card`, not from the export file.
 
-1. The VI must be saved: `check` reads the file on disk, an export may come from LabVIEW memory.
-2. `check <vi>` (`--with-callers` also checks its direct callers). UNCHANGED / SAME = nothing to do; CHANGED / NEW =
-   export; `DEPS?` = a typedef or the class
-   private data changed since the export: export again, or `ackdeps <vi>` after checking it does not matter;
-   `DEPS? ... (unknown at export)` = the dependency was saved after the export before its state was recorded, same
-   choice. `DEPS? pane <subVI>` = the connector pane of a called subVI changed (terminal added, removed, renamed,
-   retyped, moved): the caller's export is outdated although its file is unchanged - export the caller again.
-3. Export the CHANGED / NEW VIs with labview-mcp `lvai_convert_vis_to_aixml` (refresh=true) into a scratch folder.
-   A class member with class-typed terminals cannot be regenerated through AIXML at all (both labview-mcp backends
-   refuse it); an edit of such a VI is the user's, in LabVIEW.
-4. With the plugin's hook the exports are already stored and the `lvindex hook:` message holds the CARD DELTA (cut
-   to about 1200 characters): read it there. Otherwise `update <vi> <export.xml> --backend <name>` for each (full
-   output: CARD DELTA and per-uid diff), or `update --dir <folder> --backend <name>` for all exports in a folder
-   (brief; add `--diff` for the full output); `<name>` is the `backend` the export tool answered (e.g. grpc).
-   `NO CHANGE` = this export is identical to the cached one (nothing stored); `NOT confirmed` after it = the VI file
-   changed but the export did not: save the VI in LabVIEW and export again. `REFUSED ... older than the cached one` =
-   a newer export is already stored. With `--dir`, of several exports of
-   one VI only the newest is applied, the others print `SKIPPED`; `NO UNIQUE VI` (a name that fits several VIs) and
-   `NOT STORED` (matched by name only, SELF-CHECK MISMATCH) store nothing - run `update <vi> <xml>` for those after
-   checking which VI the export belongs to. Read the CARD DELTA first. It matches by name, not by uid, so it stays
-   valid when a regeneration renumbered every uid. It compares terminals (name, connector index, type), calls,
-   primitives, constants, case selectors, messages, tags and events, for the VI outside its handler frames `(VI)`
-   and per handler frame. Confirm that only the intended frames changed. Anything else (a call lost, a frame gone,
-   a constant or terminal changed) is a regression of the edit: tell the user before going on.
-   The CARD DELTA does not compare wiring. The per-uid diff below it does, but after a regeneration (it then says
-   that few old uids are left) it lists most objects as removed and added; for a wiring question read the affected
-   frame with `card <vi> --xml NAME` instead.
-   `NO CACHED VERSION` = first export of this VI: there is nothing to compare, read the card. A `NOTE` about a
-   backend change = differences may come from the two backends, not from the VI.
-   `? constants not compared` = the exporter (pylabview) could not decode those values, so a change of them is
-   invisible: if the edit may have touched one, export the VI with the grpc backend and update again.
-5. `SELF-CHECK MISMATCH` = the export came from unsaved edits (save, export again) or the skeleton misread the
-   file; `SELF-CHECK skipped` = the VI is outside the skeleton; `REFUSED` = the VI was saved during the export:
-   `check` and export again.
+## After an edit
+
+Before the first `check` or `update` of the session read `review.md` in this skill's folder: it explains every
+answer. In short: save the VI in LabVIEW, `check <vi>`, export what is CHANGED / NEW / `DEPS?`, read the CARD DELTA
+and confirm that only the intended frames changed. Anything else is a regression of the edit: tell the user.
 
 ## Do not
 
-- Run `lvindex trust`, which allows a project's extension code to run, unless the user asked for it and you have
-  read the extension file.
-- Edit anything in the cache folder (`.index`) by hand; `repair` and `recard` fix it. After `WARNING: index.json
-  corrupt` run `repair` once; tell the user, the old file is kept next to it.
-- Present a list from `callers`, `unexported` or `find` as complete for VIs called dynamically.
+- Run `lvindex trust` (lets a project's extension code run) unless the user asked and you have read the extension.
+- Edit the cache folder (`.index`) by hand; `repair` and `recard` fix it.

@@ -140,7 +140,9 @@ overwritten; `repair` then restores the entries from `xml\`.
 
 The Claude Code plugin in [plugin/](plugin) has two parts:
 - the skill [plugin/skills/lvindex/SKILL.md](plugin/skills/lvindex/SKILL.md), the usage contract for an assistant:
-  index before reading a VI, callers before editing, check / export / update and the CARD DELTA after an edit;
+  index before reading a VI, callers before editing, every export into the cache. It is kept short because it is
+  loaded in every session; the states of check / export / update and how to read the CARD DELTA after an edit are in
+  [review.md](plugin/skills/lvindex/review.md) next to it, read only before a review;
 - a PostToolUse hook ([plugin/hooks/](plugin/hooks)): after every labview-mcp `lvai_convert_vi(s)_to_aixml` call it
   stores the exports with `lvindex update --dir` (brief output) and hands that output to Claude, so the cache grows
   with every export whether or not the assistant remembers to store it. It acts only on VIs of a project where

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- The skill is split: SKILL.md (about 3 KB, loaded in every session) keeps the read path, the markers and the rules;
+  the check / update states and the CARD DELTA review moved to `review.md`, read before the first `check` or `update`.
+
 ## 0.3.0 - 2026-10-19
 
 First tagged release. Earlier `0.2.0` builds were never tagged; this lists what the release contains.
