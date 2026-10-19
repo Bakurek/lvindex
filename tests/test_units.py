@@ -8,6 +8,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "src"))
 from lvindex import cards as K  # noqa: E402
+from lvindex import cli as C  # noqa: E402
 from lvindex import skeleton as S  # noqa: E402
 
 I32, STR, CLUSTER, FUNC = 0x03, 0x30, 0x50, 0xF0
@@ -91,6 +92,40 @@ class Cards(unittest.TestCase):
         self.assertEqual(fr["Start"]["consts"], ["timeout=100"])
         self.assertEqual(sorted(fr["Start"]["card"]["calls"]), ["Demo:Log.vi", "Demo:Start.vi"])
         self.assertIn('selector="&quot;Stop&quot;"', K.frame_xml(p, "stop")[0][2])
+
+
+class InstallSource(unittest.TestCase):
+    """cli.install_source on the direct_url.json records pip / pipx / uv write (PEP 610)."""
+    PKG = os.path.join("C:\\", "work", "lvindex", "src", "lvindex")
+
+    def src(self, direct, mine=True):
+        return C.install_source(direct, mine, self.PKG)
+
+    def test_git_commit_shortened_to_plugin_length(self):
+        d = {"url": "https://github.com/x/lvindex", "vcs_info": {"vcs": "git", "commit_id": "d3dd0465feafde694389"}}
+        self.assertEqual(self.src(d), ("git", "d3dd0465feaf", "https://github.com/x/lvindex"))
+
+    def test_editable_of_this_checkout_and_of_another(self):
+        self.assertEqual(self.src({"url": "file:///C:/work/lvindex", "dir_info": {"editable": True}}, False),
+                         ("editable", os.path.join("C:\\", "work", "lvindex")))
+        self.assertEqual(self.src({"url": "file:///C:/other/lvindex", "dir_info": {"editable": True}}, False),
+                         ("checkout", os.path.join("C:\\", "work", "lvindex")))
+
+    def test_other_install_than_the_running_package_is_a_checkout(self):
+        d = {"url": "https://github.com/x/lvindex", "vcs_info": {"vcs": "git", "commit_id": "abc"}}
+        self.assertEqual(self.src(d, False)[0], "checkout")
+
+    def test_folder_and_index(self):
+        self.assertEqual(self.src({"url": "file:///C:/work/lvindex", "dir_info": {}}),
+                         ("folder", os.path.join("C:\\", "work", "lvindex")))
+        self.assertEqual(self.src({"url": "file://srv/share/lvindex-0.2.0.whl", "archive_info": {}}),
+                         ("folder", "\\\\srv\\share\\lvindex-0.2.0.whl"))
+        site = os.path.join("C:\\", "py", "Lib", "site-packages", "lvindex")
+        self.assertEqual(C.install_source(None, True, site), ("index", ""))
+
+    def test_checkout_with_its_own_egg_info(self):
+        """pip install -e leaves src\\lvindex.egg-info: found first, no record, but not an installed package."""
+        self.assertEqual(self.src(None), ("checkout", os.path.join("C:\\", "work", "lvindex")))
 
 
 if __name__ == "__main__":

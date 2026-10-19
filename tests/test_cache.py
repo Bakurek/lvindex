@@ -99,6 +99,24 @@ class Cache(unittest.TestCase):
         self.assertEqual(out.count("SKIPPED"), 2, out)
         self.assertIn(f"===== {os.path.basename(newest)} -> ", out)
 
+    def test_unknown_command_and_option_are_short_and_point_at_an_upgrade(self):
+        out = self.run_cli("nosuch")
+        self.assertIn('unknown command "nosuch"', out)
+        self.assertIn("callers", out)                  # the command list
+        self.assertIn("is older than they are", out)
+        self.assertNotIn("Reviewing VIs", out)         # not the whole manual
+        out = self.run_cli("callers", "A.vi", "--bogus")
+        self.assertIn("unknown option --bogus", out)
+        self.assertIn("is older than they are", out)
+        self.assertIn("Reviewing VIs", self.run_cli("--help"))
+
+    def test_version_outside_a_project(self):
+        env = {k: v for k, v in os.environ.items() if k != "LVINDEX_PROJECT"}
+        r = subprocess.run([sys.executable, "-I", LVINDEX, "--version"], cwd=self.tmp.name, env=env,
+                           capture_output=True, encoding="utf-8")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertRegex(r.stdout, r"^lvindex \d+\.\d+\.\d+")
+
 
 if __name__ == "__main__":
     unittest.main()

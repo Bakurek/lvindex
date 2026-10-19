@@ -1,5 +1,5 @@
 """lvindex - VI review cache + logic index for a LabVIEW project. Run: lvindex [--project P] <command> ...
-(without installing: python -I <repo>\\lvindex.py ...)
+(without installing: python -I <repo>\\lvindex.py ...; `lvindex --version` = version and install source)
 
 Project: found from the current folder (.claude\\lvindex.toml, else a single *.lvproj = zero-config) or --project
 <folder | lvindex.toml>; see config.py. Optional layers (tags, messages, actors) and project extensions
@@ -72,6 +72,7 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 
 from . import cards as K
+from . import cli
 from . import config
 from . import skeleton as S
 from .cards import make_card
@@ -956,9 +957,14 @@ def main(argv):
             "trust": (lambda p, o: E.trust(CFG, remove=bool(o.get("--remove"))), 0, 0), **Q.COMMANDS}
     if argv[1:2] != ["trust"]:                    # trust must not load (and warn about) the code it is asked about
         cmds.update(E.commands(CFG, cmds))
-    if len(argv) < 2 or argv[1] not in cmds:
+    if len(argv) < 2 or (argv[1] in ("-h", "--help", "help") and argv[1] not in cmds):
         h = E.help_text(CFG)
         sys.exit(__doc__ + (f"\nExtensions ({', '.join(E.load(CFG))}):\n{h}" if h else ""))
+    if argv[1] not in cmds:                       # short: the caller is often an assistant following a newer skill
+        missing = [n for n in CFG.get("extensions", {}) if n not in E.load(CFG)]
+        sys.exit(f'unknown command "{argv[1]}". Commands: {", ".join(sorted(cmds))}; `lvindex` without arguments '
+                 "prints the manual.\n" + (f"Extensions not loaded: {', '.join(missing)} (their commands are missing "
+                                           "here).\n" if missing else "") + cli.outdated_hint())
     fn, lo, hi = cmds[argv[1]]
     pos, opts, i = [], {}, 2
     while i < len(argv):
@@ -972,7 +978,7 @@ def main(argv):
             opts[a] = True
             i += 1
         elif a.startswith("-") and len(a) > 1 and not os.path.exists(a):
-            sys.exit(f"unknown option {a} (known: {', '.join(sorted(FLAGS_WITH_VALUE | FLAGS))})")
+            sys.exit(f"unknown option {a} (known: {', '.join(sorted(FLAGS_WITH_VALUE | FLAGS))})\n{cli.outdated_hint()}")
         else:
             pos.append(a)
             i += 1
