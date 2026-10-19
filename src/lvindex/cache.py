@@ -111,7 +111,11 @@ def load():
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError:
-        print("WARNING: index.json corrupt - starting with an empty cache", file=sys.stderr)
+        bad = f"{INDEX}.corrupt-{time.strftime('%Y%m%d-%H%M%S')}"
+        with contextlib.suppress(OSError):
+            os.replace(INDEX, bad)
+        print(f"WARNING: index.json corrupt, kept as {os.path.basename(bad)} - starting with an empty cache; "
+              f"`repair` adopts the cached exports in xml\\ again", file=sys.stderr)
         return {}
     for e in idx.values():
         x = e.get("xml")
@@ -668,11 +672,13 @@ def check(vis, callers=False):
                 continue
             flag = deps_flag(sk, qname(sk, vi), e)
             if m["mtime"] == e["mtime"] and m["size"] == e["size"]:
+                e.pop("pending", None)                      # back to the exported file: an older CHANGED is void
                 print(f"UNCHANGED {vi}{flag}")
             else:
                 h = sha(vi)
                 if h == e["sha256"]:
                     e.update(m)
+                    e.pop("pending", None)
                     print(f"SAME      {vi}  (saved, content identical){flag}")
                 else:
                     e["pending"] = {**m, "sha256": h}
@@ -794,14 +800,22 @@ def export_target(sk, xml_path):
 
 
 def update_dir(folder, backend=None):
-    """update for every export in a folder, each matched to its VI (export_target)."""
+    """update for every export in a folder, each matched to its VI (export_target). Several exports of one VI: only
+    the newest is applied, so an older one never replaces it in the cache."""
     sk = skel()
     files = sorted(f for f in os.listdir(folder) if f.lower().endswith(".xml")) if os.path.isdir(folder) else []
     if not files:
         print(f"no .xml exports in {folder}")
-    for fn in files:
-        p = os.path.join(folder, fn)
-        vi = export_target(sk, p)
+    found = [(fn, os.path.join(folder, fn)) for fn in files]
+    found = [(fn, p, export_target(sk, p)) for fn, p in found]
+    newest = {}
+    for fn, p, vi in found:
+        if vi and (key(vi) not in newest or os.stat(p).st_mtime > os.stat(newest[key(vi)]).st_mtime):
+            newest[key(vi)] = p
+    for fn, p, vi in found:
+        if vi and newest[key(vi)] != p:
+            print(f"===== {fn} -> {qname(sk, vi)}: SKIPPED, {os.path.basename(newest[key(vi)])} is a newer export of it")
+            continue
         print(f"===== {fn} -> {qname(sk, vi) if vi else 'NO UNIQUE VI - pass it as update <vi> <xml>'}")
         if vi:
             update(vi, p, backend)
@@ -859,7 +873,8 @@ def repair():
                 print(f"ORPHAN    {fn}: no VI in the skeleton - left in place")
             elif os.stat(vi).st_mtime > os.stat(p).st_mtime:
                 print(f"STALE     {fn}: {q} saved after this export - left in place (export again)")
-            elif idx.get(key(vi), {}).get("xml") and os.stat(idx[key(vi)]["xml"]).st_mtime >= os.stat(p).st_mtime:
+            elif (os.path.exists(idx.get(key(vi), {}).get("xml") or "")
+                  and os.stat(idx[key(vi)]["xml"]).st_mtime >= os.stat(p).st_mtime):
                 print(f"OLDER     {fn}: {q} has a newer cached export - deleted")
                 os.remove(p)
             else:

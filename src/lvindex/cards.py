@@ -12,7 +12,7 @@ Project parts (configure(cfg) with the lvindex.toml sections; absent section = e
            "<field>:<accessor>" when the object comes from an Unbundle, plain "<accessor>" for the own object
   handles  [messages]: cases of the Case Structure driven by a dequeue VI, plus "X (in Default)" for a case
            structure nested in a frame and driven by its selector value. Without [messages]: case structures that
-           look like dispatchers (>= 3 named cases, not error / boolean, inside a loop)
+           look like dispatchers (>= 2 named cases, not error / boolean, inside a loop)
   results  status_enum: enum constants containing that item, not necessarily outputs
 frames(path) -> per-handler cards for those cases and Event Structure frames (computed on demand, never stored).
 CARD_V changes with this file and with the configuration: older cards are rebuilt lazily by cache.py.
