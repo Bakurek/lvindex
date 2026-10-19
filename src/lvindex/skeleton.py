@@ -13,6 +13,7 @@ Per VI (from the binary RSRC container, see rsrc.py):
            selectors are NOT stored there); empty without that config
   strs   - other printable strings of the diagram heap (constants, labels, comments) - full-text search only
   orphan - true when the file lies in a class folder but is not listed in the .lvclass
+  pane   - connector-pane fingerprint (pane_fp): pattern, slot labels, types, input / output and dispatch flags
 Per typedef (.ctl): deps (nested typedefs / classes), sha256.
 Per class / library (.lvclass / .lvlib XML): parent (superclass inside src), extern_parent (outside src, e.g. vi.lib),
   implements (interfaces), interface flag, lib chain, members, version, fp = hash of the type (VCTP) and default-data
@@ -33,7 +34,7 @@ import struct
 
 from .rsrc import blocks, parse, unpack
 
-SCHEMA = 7
+SCHEMA = 8
 FP_V = 1          # fingerprint definition version: history survives schema changes while this is equal
 EXT_PATH = (b"<userlib>", b"<vilib>", b"<instrlib>")
 IDENT = re.compile(rb"([A-Z][A-Za-z0-9]{3})\x00\x00\x00[\x00-\x0f]")
@@ -236,6 +237,97 @@ def links(b):
     return calls, deps, ext
 
 
+def _types(v):
+    """Flat type list and top-level type map of an unpacked VCTP block."""
+    n, pos, tds = struct.unpack_from(">I", v, 0)[0], 4, []
+    for _ in range(n):
+        size = struct.unpack_from(">H", v, pos)[0]
+        tds.append(v[pos:pos + size])
+        pos += size
+    cnt = struct.unpack_from(">H", v, pos)[0]
+    return tds, [struct.unpack_from(">H", v, pos + 2 + 2 * i)[0] for i in range(cnt)]
+
+
+def _u2p(d, pos):
+    """Variable-size type index: u16, or u32 with the top bit set."""
+    x = struct.unpack_from(">H", d, pos)[0]
+    if x & 0x8000:
+        return struct.unpack_from(">I", d, pos)[0] & 0x7FFFFFFF, pos + 4
+    return x, pos + 2
+
+
+def _label(td):
+    """Label at the end of a type (Pascal string, maybe padded), None without one."""
+    for pos in range(len(td) - 2, 3, -1):
+        n = td[pos]
+        if n and pos + 1 + n in (len(td), len(td) - 1) and all(c >= 32 and c != 127 for c in td[pos + 1:pos + 1 + n]):
+            return td[pos + 1:pos + 1 + n]
+    return None
+
+
+def _canon(tds, td, depth=0):
+    """Type bytes with the flat-type indices of clusters, arrays and refnums replaced by those types, so the result
+    does not depend on the order of the VI's type list. A typedef is its name and label only: its content is
+    covered by the typedef's own fingerprint."""
+    if depth > 12 or len(td) < 4:
+        return td
+    try:
+        if td[3] == 0x50:                                   # cluster: count, element indices
+            cnt, pos, parts = struct.unpack_from(">H", td, 4)[0], 6, []
+            for _ in range(cnt):
+                i, pos = _u2p(td, pos)
+                parts.append(_canon(tds, tds[i], depth + 1))
+            return td[:4] + b"{" + b",".join(parts) + b"}" + td[pos:]
+        if td[3] == 0x40:                                   # array: ndims, dims, element index
+            pos = 6 + 4 * struct.unpack_from(">H", td, 4)[0]
+            i, end = _u2p(td, pos)
+            return td[:pos] + b"[" + _canon(tds, tds[i], depth + 1) + b"]" + td[end:]
+        if td[3] == 0xF1:                                   # typedef: flags, path segments, inline type
+            cnt, pos = struct.unpack_from(">I", td, 8)[0], 12
+            for _ in range(cnt):
+                pos += 1 + td[pos]
+            return td[12:pos] + b"|" + (_label(td) or b"")
+        if td[3] == 0x70 and len(td) >= 8:                  # refnum: kind, maybe count + element types
+            cnt, pos, parts = struct.unpack_from(">H", td, 6)[0], 8, []
+            if 0 < cnt <= 8:
+                for _ in range(cnt):
+                    i, pos = _u2p(td, pos)
+                    if i >= len(tds) or pos > len(td):
+                        return td
+                    parts.append(_canon(tds, tds[i], depth + 1))
+                return td[:8] + b"<" + b",".join(parts) + b">" + td[pos:]
+    except (struct.error, IndexError):
+        pass
+    return td
+
+
+def pane_fp(b):
+    """Connector-pane fingerprint: pattern, and per used slot its label, type and the input / output and dynamic
+    dispatch flags (CONP -> function type in VCTP). Required / recommended and other flags are left out: they do
+    not change a caller's export. None when the VI has no decodable connector pane."""
+    try:
+        tds, top = _types(unpack(b["VCTP"][0]))
+        k = struct.unpack_from(">H", b["CONP"][0], 0)[0]           # 1-based index into the top-level types
+        if not 0 < k <= len(top):
+            return None
+        f = tds[top[k - 1]]
+        if f[3] != 0xF0:
+            return None
+        cnt, pos, slots = struct.unpack_from(">H", f, 4)[0], 6, []
+        for s in range(cnt):
+            i, pos = _u2p(f, pos)
+            if tds[i][3]:                                   # 0 = void: unused slot
+                slots.append((s, tds[i]))
+        tail = f[pos:]
+        h = hashlib.sha256(tail[2:4] + struct.pack(">H", len(slots)))
+        for s, td in slots:
+            fl = struct.unpack_from(">I", tail, 4 + 4 * s)[0] & 0x8100 if len(tail) >= 8 + 4 * s else 0
+            h.update(b"%d|%d|" % (s, fl) + (_label(td) or b"") + b"|" + _canon(tds, td))
+        return h.hexdigest()[:16]
+    except (KeyError, IndexError, struct.error):
+        return None
+
+
 def scan_vi(path, symbol=None):
     b = blocks(path)
     calls, deps, ext = links(b)
@@ -261,7 +353,7 @@ def scan_vi(path, symbol=None):
                 ext.add(v)
     strs = {s for s in strs if not s.lower().endswith((".lvclass", ".lvlib", ".vi", ".vim", ".ctl"))}
     return {"calls": {k: sorted(v) for k, v in calls.items()}, "deps": sorted(deps), "syms": sorted(syms),
-            "strs": sorted(strs - syms), "ext": sorted(ext)}
+            "strs": sorted(strs - syms), "ext": sorted(ext), "pane": pane_fp(b)}
 
 
 def scan_ctl(path):
@@ -333,7 +425,7 @@ def build(src, old=None, full=False, skip=(), symbol=None, cfg_hash=""):
                 info = scan_vi(p, symbol) if kind == "vis" else scan_ctl(p)
             except Exception as ex:                     # unusual file: keep it listed
                 stats["errors"] += 1
-                info = {"calls": {}, "deps": [], "syms": [], "strs": [], "ext": [], "sha256": None,
+                info = {"calls": {}, "deps": [], "syms": [], "strs": [], "ext": [], "sha256": None, "pane": None,
                         "error": str(ex)[:80]}
             new[kind][q] = {**info, "raw_calls": info.get("calls", {}), "raw_deps": info["deps"],
                             "raw_ext": info.get("ext", []), "file": rel,
@@ -376,6 +468,7 @@ def build(src, old=None, full=False, skip=(), symbol=None, cfg_hash=""):
     hist = {k: list(h) for k, h in old.get("hist", {}).items()}
     cur = {q: ((e.get("sha256") or "?")[:16], e["mtime"]) for q, e in ctls.items()}
     cur.update({f"class {c}": (i["fp"], i["mtime"]) for c, i in classes.items() if not i["lib"]})
+    cur.update({f"pane {q}": (v["pane"], v["mtime"]) for q, v in vis.items() if v.get("pane")})
     for k, (fp, mt) in cur.items():
         h = hist.setdefault(k, [])
         if not h or h[-1][0] != fp:
@@ -463,13 +556,20 @@ def class_of_dep(sk, name):
 
 
 def dep_fps(sk, q):
-    """{dep: fingerprint} for the typedefs a VI links (followed transitively through typedefs) and for its own
-    class's private data - other classes' private data is not accessible to the VI. Names that do not resolve
-    (vi.lib, skipped folders) are left out."""
+    """{dep: fingerprint} for the typedefs a VI links (followed transitively through typedefs), for its own
+    class's private data - other classes' private data is not accessible to the VI - and for the connector panes
+    of the project subVIs it calls directly ("pane <subVI>"; a dynamic-dispatch call: the implementation for the
+    wire class). Names that do not resolve (vi.lib, skipped folders) are left out."""
     v = sk["vis"].get(q)
     out, todo, seen = {}, list(v["deps"]) if v else [], set()
     if v and v.get("class") in sk["classes"] and not sk["classes"][v["class"]]["lib"]:
         out[f"class {v['class']}"] = sk["classes"][v["class"]]["fp"]
+    for n in (v["calls"] if v else {}):
+        if n in v.get("ext", []):                              # vi.lib / user.lib: not a project VI
+            continue
+        t = n if n in sk["vis"] else implementation(sk, *n.rsplit(":", 1)) if ":" in n else None
+        if t and t != q and sk["vis"][t].get("pane"):
+            out[f"pane {t}"] = sk["vis"][t]["pane"]
     while todo:
         n = todo.pop()
         if n in seen:

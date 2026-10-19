@@ -134,8 +134,11 @@ def load():
         raw, here = {}, os.path.dirname(path)
         src, lvproj = here, path
     else:
-        with open(path, "rb") as f:
-            raw = tomllib.load(f)
+        try:
+            with open(path, encoding="utf-8-sig") as f:          # -sig: editors that write a BOM
+                raw = tomllib.loads(f.read())
+        except (tomllib.TOMLDecodeError, UnicodeDecodeError) as ex:
+            sys.exit(f"{path}: not valid TOML (UTF-8) - {ex}")
         here = os.path.dirname(path)
         unknown = set(raw) - KNOWN
         if unknown:

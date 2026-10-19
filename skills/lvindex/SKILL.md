@@ -41,8 +41,8 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
 2. `check <vi>`. UNCHANGED / SAME = nothing to do; CHANGED / NEW = export; `DEPS?` = a typedef or the class
    private data changed since the export: export again, or `ackdeps <vi>` after checking it does not matter;
    `DEPS? ... (unknown at export)` = the dependency was saved after the export before its state was recorded, same
-   choice. `check` does not notice a changed connector pane of a subVI: its callers stay UNCHANGED. When an edit
-   changed a connector pane, export the callers (`callers <vi>`) as well, or tell the user their cards may be stale.
+   choice. `DEPS? pane <subVI>` = the connector pane of a called subVI changed (terminal added, removed, renamed,
+   retyped, moved): the caller's export is outdated although its file is unchanged - export the caller again.
 3. Export the CHANGED / NEW VIs with labview-mcp `lvai_convert_vis_to_aixml` (refresh=true) into a scratch folder.
 4. `update <vi> <export.xml>` for each. Read the CARD DELTA first. It matches by name, not by uid, so it stays
    valid when a regeneration renumbered every uid. It compares terminals (name, connector index, type), calls,

@@ -82,7 +82,7 @@ project's repository. It holds:
 ## Workflow for VI review
 
 1. Save the VI in LabVIEW, then run `check <vi>`. It prints UNCHANGED, SAME, CHANGED or NEW, and adds `DEPS?` when a
-   typedef or the class private data changed since the export.
+   typedef, the class private data or the connector pane of a called subVI changed since the export.
 2. Export only the CHANGED / NEW VIs to AIXML.
 3. Run `update <vi> <export.xml>` to see the diff, store the export and self-check it against the saved file. The
    diff starts with a CARD DELTA: terminals, calls, primitives, constants, case selectors, messages and events,
@@ -108,6 +108,10 @@ VI, callers before editing, check / export / update and the CARD DELTA after an 
 | `config.py` | project discovery and configuration |
 | `ext.py` | extension loader and API |
 | `cli.py` | command line entry point (`lvindex`, `python -m lvindex`, `lvindex.py`) |
+
+Tests: `python -I -m unittest discover -s tests` (diffs on hand-written AIXML, runs in CI);
+`python -I tests/golden.py <suite.toml> [--update]` compares query outputs on a real project with stored ones
+(the suite format is in its docstring; keep suites of private projects out of the repository).
 
 Design notes and known gaps: [ROADMAP.md](ROADMAP.md).
 

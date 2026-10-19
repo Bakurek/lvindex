@@ -26,12 +26,16 @@
   the extension is listed and trusted.
 
 ## Known gaps
-- `check` does not notice a changed connector pane of a subVI: a caller whose file did not change shows UNCHANGED
-  although a fresh export could differ. Planned: subVI connector-pane fingerprints in the DEPS? check.
+- SubVI connector panes (DEPS? `pane <subVI>`): the fingerprint covers pattern, slot labels, types and the input /
+  output and dynamic-dispatch flags; required / recommended flags are left out, and a typedef terminal counts by
+  name only (its content is the typedef's own DEPS? entry). Element types of refnums are resolved heuristically.
+  Caches from before the pane check start tracking panes at the first `check` after the upgrade.
 - The AIXML backend that produced an export is not recorded; exports from different backends can produce card and
   diff churn.
 - The extension API (`ext.Api`) is young: `api.V` / `api.K` / `api.S` expose core internals that may change.
-- No tests yet: a small fixture LabVIEW project (class, dispatch, QMH) is needed; project VIs cannot be published.
+- Tests: CI covers the diffs on hand-written AIXML (`tests/test_diff.py`); the binary readers are checked locally
+  against real projects with `tests/golden.py`, whose suites and expected outputs stay outside the repository
+  (project VIs cannot be published).
 - No generic queue identity across VIs; no table of native queue / notifier node names.
 - Index keys are absolute VI paths: moving a project means re-exporting.
 - `.llb` / `.lvlibp` contents are not read; VIs called by reference or by name have no callers.

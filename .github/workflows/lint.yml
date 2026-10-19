@@ -18,3 +18,12 @@ jobs:
         run: |
           mkdir -p /tmp/proj && touch /tmp/proj/Demo.lvproj
           LVINDEX_PROJECT=/tmp/proj python -c "import sys; sys.path.insert(0, 'src'); import lvindex.query, lvindex.cli"
+
+  tests:
+    runs-on: windows-latest            # the tools are Windows-only (path handling)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -I -m unittest discover -s tests -v

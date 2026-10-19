@@ -1,0 +1,22 @@
+<VI _name="Demo.lvlib:Dispatcher.vi">
+  <Control _name="state in" conIdx="1" outputs="value:10.value" type="string" uid="10" uid_parent="root" value=""/>
+  <Control _name="error in" conIdx="2" outputs="value:11.value" type="cluster{bool.status,int32.code,string.source}" uid="11" uid_parent="root" value="[false,0,]"/>
+  <Indicator _name="error out" conIdx="3" inputs="value:20.Out1" type="cluster{bool.status,int32.code,string.source}" uid="12" uid_parent="root" value="[false,0,]"/>
+  <Structure _name="While Loop" uid="20" uid_parent="root">
+    <Call inputs="state:10.value" outputs="next:21.next" target="Demo.lvlib\3ANext State.vi" uid="21" uid_parent="20"/>
+    <Structure _name="Case Structure" selectin="21.next" uid="22" uid_parent="20">
+      <CaseFrame selector="&quot;Start&quot;" selectout="" uid="23" uid_parent="22">
+        <Constant _name="timeout" outputs="value:24.value" type="int32" uid="24" uid_parent="23" value="100"/>
+        <Call inputs="timeout:24.value" outputs="" target="Demo.lvlib\3AStart.vi" uid="25" uid_parent="23"/>
+        <Call inputs="" outputs="" target="Demo.lvlib\3ALog.vi" uid="26" uid_parent="23"/>
+        <Call inputs="" outputs="" target="Demo.lvlib\3ALog.vi" uid="27" uid_parent="23"/>
+      </CaseFrame>
+      <CaseFrame selector="&quot;Stop&quot;" selectout="" uid="28" uid_parent="22">
+        <Constant _name="stop" outputs="value:29.value" type="bool" uid="29" uid_parent="28" value="false"/>
+      </CaseFrame>
+      <CaseFrame selector="Default" selectout="" uid="30" uid_parent="22">
+        <Node _name="Add" inputs="" outputs="" uid="31" uid_parent="30"/>
+      </CaseFrame>
+    </Structure>
+  </Structure>
+</VI>

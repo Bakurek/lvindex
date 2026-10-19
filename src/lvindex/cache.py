@@ -8,7 +8,8 @@ Project: found from the current folder (.claude\\lvindex.toml, else a single *.l
 
 Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memory, check looks at disk):
   check <vi> [...]      UNCHANGED / SAME (hash equal) / CHANGED / NEW / MISSING, + DEPS? when a typedef the VI links
-                        (also nested) or its own class's private data changed since the cached export.
+                        (also nested), its own class's private data or the connector pane of a subVI it calls
+                        ("pane <subVI>") changed since the cached export.
                         "(unknown at export)" = saved after the export before its state was recorded: re-export,
                         or `ackdeps` after checking it
   (export CHANGED/NEW with lvai_convert_vis_to_aixml refresh=true into the scratchpad)
@@ -76,7 +77,7 @@ SRC = CFG["src"]
 TAG_RE = re.compile(CFG["tags"]["literal"].encode()) if (CFG.get("tags") or {}).get("literal") else None
 STRIP = [r' description="[^"]*"', r' connection="[^"]*"']
 SKIP_ATTR = {"uid", "uid_parent", "description", "connection", "instance", "outputs"}
-DEPS_V = 3                 # dependency-baseline format in index entries
+DEPS_V = 4                 # dependency-baseline format in index entries (4: + subVI connector panes)
 _held = [0]
 _sk = {}
 
@@ -280,18 +281,24 @@ def deps_flag(sk, q, e):
     """' DEPS? ...' when a dependency fingerprint differs from the one recorded at export."""
     if q is None:
         return ""
-    if e.get("deps_v") != DEPS_V:                            # entry from an older fingerprint scheme
-        e["deps_fp"], e["deps_v"] = dep_baseline(sk, q, e.get("exported_at", e["mtime"])), DEPS_V
+    if e.get("deps_v") == 3 and "deps_fp" in e:             # keep that baseline (and its ackdeps); subVI panes
+        cur = S.dep_fps(sk, q)                               # were not recorded then: tracked from now on
+        e["deps_fp"], e["deps_v"] = {**{d: fp for d, fp in cur.items() if d.startswith("pane ")}, **e["deps_fp"]}, DEPS_V
+    elif e.get("deps_v") != DEPS_V:                          # entry from an older fingerprint scheme
+        base, cur = dep_baseline(sk, q, e.get("exported_at", e["mtime"])), S.dep_fps(sk, q)
+        base.update({d: cur[d] for d, fp in base.items() if d.startswith("pane ") and fp is None})   # as for v3
+        e["deps_fp"], e["deps_v"] = base, DEPS_V
     base, cur = e["deps_fp"], S.dep_fps(sk, q)
     ch = []
     for d, fp in sorted(cur.items()):
         if d not in base:
-            ch.append(f"{d} (new)")
+            if not d.startswith("pane "):          # a new subVI call changes the caller's file anyway; a new key
+                ch.append(f"{d} (new)")            # without that = the dispatch target resolved differently
         elif base[d] is None:
             ch.append(f"{d} (unknown at export)")
         elif base[d] != fp:
             ch.append(d)
-    ch += [f"{d} (gone)" for d in sorted(base) if d not in cur]
+    ch += [f"{d} (gone)" for d in sorted(base) if d not in cur and not d.startswith("pane ")]
     return f"  DEPS? {', '.join(ch[:4])}{f' +{len(ch) - 4}' if len(ch) > 4 else ''}" if ch else ""
 
 
