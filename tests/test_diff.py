@@ -26,6 +26,12 @@ def renumber(text, by=1000):
     return re.sub(r'\b(inputs|outputs|selectin|selectout)="([^"]*)"', wires, text)
 
 
+def undecode(text, uid):
+    """The constant's value as labview-mcp's pylabview reader leaves a value it cannot decode: empty, plus a comment."""
+    text = re.sub(rf'(<Constant [^>]*uid="{uid}"[^>]*value=")[^"]*"', r'\1"', text)
+    return text.replace("</VI>", f"  <!-- vi2aixml: constant {uid}: value of type TypeDef not decoded -->\n</VI>")
+
+
 class Diff(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -103,6 +109,82 @@ class Diff(unittest.TestCase):
             Diff.base = self.write("base", BASE)
         self.assertIn("CARD DELTA: none", out)
         self.assertIn("(6 of 6 frames unchanged)", out)
+
+    def diff_pair(self, name, old, new):
+        Diff.base = self.write(name + "_old", old)
+        try:
+            return self.diff(name + "_new", new)
+        finally:
+            Diff.base = self.write("base", BASE)
+
+    def test_inputs_order_and_target_spelling(self):
+        two = BASE.replace('inputs="timeout:24.value"', 'inputs="timeout:24.value,state:10.value"')
+        swapped = two.replace('inputs="timeout:24.value,state:10.value"', 'inputs="state:10.value,timeout:24.value"')
+        out = self.diff_pair("order", two, swapped.replace("Demo.lvlib\\3AStart.vi", "Demo.lvlib:Start.vi"))
+        self.assertIn("CARD DELTA: none", out)
+        self.assertIn("NO LOGICAL DIFF", out)
+
+    def test_unwired_input_and_escaped_name(self):
+        old = BASE.replace('inputs="timeout:24.value"', 'inputs="timeout:24.value,priority:"').replace(
+            '_name="timeout"', '_name="time\\2C\\0A  out"')
+        new = BASE.replace('_name="timeout"', '_name="time,\n  out"')
+        out = self.diff_pair("unwired", old, new)
+        self.assertIn("CARD DELTA: none", out)
+        self.assertIn("NO LOGICAL DIFF", out)
+
+    def test_undecoded_constant_one_side(self):
+        out = self.diff("undecoded", undecode(BASE, "24"))
+        self.assertIn("CARD DELTA: none", out)
+        self.assertIn("? constants not compared, value not decoded by the exporter: timeout in [Start]", out)
+        self.assertIn("? 1 constant value(s) not compared, not decoded by the exporter: timeout", out)
+        self.assertNotIn("NO LOGICAL DIFF", out)
+
+    def test_undecoded_constant_both_sides(self):
+        out = self.diff_pair("undecoded2", undecode(BASE, "24"), undecode(BASE, "24"))
+        self.assertIn("timeout in [Start]", out)          # not compared is said, not reported as equal
+        self.assertIn("1 constant value(s) not compared", out)
+
+    def test_undecoded_constant_does_not_hide_an_added_one(self):
+        extra = '<Constant _name="timeout" outputs="" type="int32" uid="40" uid_parent="23" value="5"/>'
+        out = self.diff("undecoded_add", undecode(BASE, "24").replace("<Call inputs=\"timeout", extra + "<Call inputs=\"timeout"))
+        self.assertIn("+timeout=5", out)
+
+    def test_undecoded_constants_of_other_names_differ(self):
+        out = self.diff_pair("undecoded_name", undecode(BASE, "24"),
+                             undecode(BASE.replace('_name="timeout"', '_name="delay"'), "24"))
+        self.assertIn("+delay=<not decoded>, -timeout=<not decoded>", out)
+
+    def test_undecoded_pair_does_not_hide_a_changed_same_name_constant(self):
+        extra = '<Constant _name="timeout" outputs="" type="int32" uid="40" uid_parent="23" value="{}"/>'
+        at = "<Call inputs=\"timeout"
+        old = undecode(BASE, "24").replace(at, extra.format(5) + at)
+        out = self.diff_pair("nd_pair", old, renumber(old.replace('value="5"', 'value="6"'), 1000).replace(
+            "constant 24:", "constant 1024:"))
+        self.assertIn("constants: +timeout=6, -timeout=5", out)
+        self.assertIn("timeout in [Start]", out)
+
+    def test_name_with_equals_sign(self):
+        out = self.diff_pair("eq_name", undecode(BASE, "24"), BASE.replace('_name="timeout"', '_name="timeout=b"'))
+        self.assertIn("+timeout=b=100", out)
+        self.assertIn("-timeout=<not decoded>", out)
+
+    def test_same_port_order_kept(self):
+        two = BASE.replace('inputs="timeout:24.value"', 'inputs="el:24.value,el:29.value"')
+        out = self.diff_pair("ports", two, two.replace("el:24.value,el:29.value", "el:29.value,el:24.value"))
+        self.assertNotIn("NO LOGICAL DIFF", out)
+
+    def test_regenerated_rewire_between_same_name_constants(self):
+        extra = '<Constant _name="timeout" outputs="value:40.value" type="int32" uid="40" uid_parent="23" value="200"/>'
+        at = "<Call inputs=\"timeout"
+        old = BASE.replace(at, extra + at)
+        new = renumber(old.replace('inputs="timeout:24.value"', 'inputs="timeout:40.value"'))
+        out = self.diff_pair("rewire", old, new)
+        self.assertIn("timeout:<Constant:timeout=100>", out)
+        self.assertIn("timeout:<Constant:timeout=200>", out)
+
+    def test_tag_change(self):
+        out = self.diff("tag", BASE.replace('<Constant _name="stop"', '<Control _name="stop"'))
+        self.assertIn("tag: Constant -> Control", out)
 
     def test_growth_is_not_regeneration(self):
         extra = "".join(f'<Constant _name="k{i}" outputs="" type="int32" uid="{90 + i}" uid_parent="30" value="{i}"/>'

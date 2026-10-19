@@ -61,6 +61,8 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
    frame with `card <vi> --xml NAME` instead.
    `NO CACHED VERSION` = first export of this VI: there is nothing to compare, read the card. A `NOTE` about a
    backend change = differences may come from the two backends, not from the VI.
+   `? constants not compared` = the exporter (pylabview) could not decode those values, so a change of them is
+   invisible: if the edit may have touched one, export the VI with the grpc backend and update again.
 5. `SELF-CHECK MISMATCH` = the export came from unsaved edits (save, export again) or the skeleton misread the
    file; `SELF-CHECK skipped` = the VI is outside the skeleton; `REFUSED` = the VI was saved during the export:
    `check` and export again.

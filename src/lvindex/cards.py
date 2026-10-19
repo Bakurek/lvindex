@@ -79,6 +79,23 @@ def vi_name(e):
     return target(e).split(":")[-1]
 
 
+UNDECODED = re.compile(rb"<!--\s*vi2aixml: constant (\d+): value of type .*? not decoded\s*-->")
+NOT_DECODED = "<not decoded>"
+
+
+def undecoded(path):
+    """uids of the constants whose value the exporter could not decode (labview-mcp's pylabview reader says so in an
+    XML comment and leaves value="")."""
+    with open(path, "rb") as f:
+        return {u.decode() for u in UNDECODED.findall(f.read())}
+
+
+def plain(s):
+    """A name with AIXML's \\XX escapes decoded and whitespace runs as one space: exporters differ in both (a
+    newline kept as \\0A or as a literal one, which XML attribute parsing turns into a space)."""
+    return " ".join(re.sub(r"\\([0-9A-F]{2})", lambda m: chr(int(m.group(1), 16)), s or "").split())
+
+
 def unesc(s):
     return (s or "").replace("\\3A", ":").replace("\\2C", ",").replace('"', "").strip()
 
@@ -100,6 +117,7 @@ def status_names(t):
 class Model:
     def __init__(self, path):
         self.root = ET.parse(path).getroot()
+        self.undecoded = undecoded(path)
         self.parent, self.prod, self.cons, self.sel = {}, {}, {}, {}
         for e in self.root.iter():
             for c in e:
@@ -450,7 +468,9 @@ def consts(m, frame):
         if sinks and all((port or "").lower() in TYPE_PORTS for port in sinks):
             continue
         names = enum_names(t)
-        if names:
+        if e.get("uid") in m.undecoded:
+            out.append(f"{n}={NOT_DECODED}")
+        elif names:
             if v.isdigit() and int(v) < len(names):
                 out.append(f"{n}={names[int(v)]}")
         elif re.fullmatch(r"(u?int\d+|double|single|float\d*)", t):

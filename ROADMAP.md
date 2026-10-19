@@ -53,8 +53,11 @@
   that typedef itself (usually true when it wires the terminal); refnum element types are resolved heuristically;
   a VI whose pane type is not a plain function type is not tracked. Caches from before the pane check track panes
   from the first `check` after the upgrade.
-- The AIXML backend of an export is recorded only when `update` / `seed` get `--backend`; exports from different
-  backends can produce card and diff churn (pointed out when both are known).
+- The AIXML backend of an export is recorded only when `update` / `seed` get `--backend` (pointed out when both are
+  known). The diffs normalise what exporters write differently (input order, unwired inputs, `\3A` / `\XX` escapes,
+  constant values in wire sources); constants the pylabview reader does not decode are listed as not compared. What
+  is left between a grpc and a pylabview export of the same VI are reader gaps (unnamed terminals, missing nodes,
+  flattened unbundle paths, dispatch call naming), not removed by lvindex.
 - A class member with class-typed terminals cannot be regenerated through AIXML (labview-mcp refuses it), so an
   assistant's edit loop covers non-class VIs only; class code is edited in LabVIEW and reviewed with `check` /
   `update`.

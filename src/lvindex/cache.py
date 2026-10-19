@@ -331,7 +331,7 @@ def deps_flag(sk, q, e):
 
 # ---------------------------------------------------------------- semantic diff
 def label(e):
-    t, n = e.tag, e.get("_name") or e.get("_id") or ""
+    t, n = e.tag, K.plain(e.get("_name")) or e.get("_id") or ""
     if t == "Call":
         n = e.get("target", "").replace("\\3A", ":").replace(".lvclass", "")
     elif t == "CaseFrame":
@@ -355,25 +355,30 @@ def parse(path):
             parent[c] = e
             walk(c, path + [label(e)] if e.tag in ("Structure", "CaseFrame") else path)
     walk(root, [])
-    return nodes, parent, paths, prod
+    return nodes, parent, paths, prod, K.undecoded(path)
 
 
 WIRE = re.compile(r"(?:^|,)([^:,]*):(\d+\.[^,]*)")
 
 
-def name(e):
+def name(e, nd=frozenset()):
+    """Short reference to a wire's source; a constant with its value (it tells two same-name constants apart after a
+    regeneration), as <not decoded> when either export could not decode it (nd: uids)."""
+    if e.tag == "Constant":
+        v = K.NOT_DECODED if e.get("uid") in nd else e.get("value", "")[:60]
+        return f"Constant:{K.plain(e.get('_name'))}={v}"
     lab = label(e)
     return f"{lab}#{e.get('uid')}" if e.tag in ("Node", "Call") else lab
 
 
 def src_of(model, wire, depth=0):
     """Name of the object driving a wire, following tunnels and shift registers."""
-    nodes, parent, _, prod = model
+    nodes, parent, _, prod, nd = model
     if wire not in prod:
         return "?"
     e, port = prod[wire]
     if depth > 12 or e.tag not in ("Tunnel", "Left", "Right"):
-        return f"{name(e)}.{port}" if e.tag in ("Node", "Call") else name(e)
+        return f"{name(e)}.{port}" if e.tag in ("Node", "Call") else name(e, nd)
     ins = e.get("inputs")
     if not ins and e.tag == "Tunnel":
         owner = parent.get(e)
@@ -398,7 +403,22 @@ def resolve(model, ref):
 
 
 def desc(model, e):
+    """Attributes to compare, normalised where exporters differ: inputs in port order without the unwired ones,
+    targets with ":", names unescaped; the value of a constant the exporter could not decode as <not decoded>."""
     a = {k: v for k, v in e.attrib.items() if k not in SKIP_ATTR}
+    if "target" in a:
+        a["target"] = a["target"].replace("\\3A", ":")
+    if "_name" in a:
+        a["_name"] = K.plain(a["_name"])
+    if "inputs" in a:                                  # commas inside names are escaped (\2C)
+        wired = sorted((x for x in a["inputs"].split(",") if x and not x.endswith(":")),
+                       key=lambda x: x.partition(":")[0])    # stable: ports of the same name keep their order
+        if wired:
+            a["inputs"] = ",".join(wired)
+        else:
+            del a["inputs"]
+    if e.tag == "Constant" and e.get("uid") in model[4]:
+        a["value"] = K.NOT_DECODED
     for k in ("inputs", "selectin", "selectout"):
         if k in a:
             a[k] = resolve(model, a[k])
@@ -407,8 +427,10 @@ def desc(model, e):
 
 def semdiff(old_path, new_path):
     A, B = parse(old_path), parse(new_path)
+    nd = A[4] | B[4]                                   # not decoded in either export: compared on neither side
+    A, B = (*A[:4], nd), (*B[:4], nd)
     kept = len(set(A[0]) & set(B[0]))                  # old uids still present
-    rows = []
+    rows, unknown = [], []
     for u in sorted(set(A[0]) | set(B[0]), key=int):
         if u in A[0] and u not in B[0]:
             e = A[0][u]
@@ -423,7 +445,13 @@ def semdiff(old_path, new_path):
             da, db = desc(A, ea), desc(B, eb)
             if eb.tag == "Tunnel" and not eb.get("inputs") and da.get("mode") == db.get("mode"):
                 continue                       # frame input tunnels: consumers already show the resolved source
+            if eb.tag == ea.tag == "Constant" and u in nd:
+                da.pop("value", None)
+                db.pop("value", None)
+                unknown.append(K.plain(eb.get("_name")) or "const")
             ch = {k: (da.get(k), db.get(k)) for k in sorted(set(da) | set(db)) if da.get(k) != db.get(k)}
+            if ea.tag != eb.tag:
+                ch = {"tag": (ea.tag, eb.tag), **ch}
             if ch:
                 rows.append((B[2][u], "~", f"{label(eb)} " + "; ".join(f"{k}: {o} -> {n}" for k, (o, n) in ch.items())))
     rows.sort(key=lambda r: " > ".join(r[0]))
@@ -437,6 +465,9 @@ def semdiff(old_path, new_path):
             out.append(f"@ {p}")
             last = p
         out.append(f"  {op} {text}")
+    if unknown:
+        out.append(f"? {len(unknown)} constant value(s) not compared, not decoded by the exporter: "
+                   f"{', '.join(sorted(set(unknown)))}")
     return "\n".join(out)
 
 
@@ -455,7 +486,8 @@ def own_facts(m, scope, skip):
             elif c.tag in ("Node", "Structure"):
                 f["primitives"][c.get("_name") or c.tag] += 1
             elif c.tag == "Constant":
-                f["constants"][f"{c.get('_name') or 'const'}={c.get('value', '')[:60]}"] += 1
+                v = K.NOT_DECODED if c.get("uid") in m.undecoded else c.get("value", "")[:60]
+                f["constants"][(K.plain(c.get("_name")) or "const", v)] += 1      # shown as name=value
             elif c.tag == "CaseFrame":                      # "Error .." = "Error" (a regeneration respells it)
                 sel = K.unesc(c.get("selector"))
                 f["cases"][f"[{'Error' if sel == 'Error ..' else sel}]"] += 1
@@ -486,14 +518,51 @@ def delta_facts(path):
     return vi, frames
 
 
-def fact_delta(a, b, cap=12):
-    """['field: +x, -y', ...] for the fields whose multisets differ ("(x2)" = twice)."""
+def drop_undecoded(x, y):
+    """Constants multisets ({(name, value): n}) without the constants that cannot be compared because a value was not
+    decoded: per name, <not decoded> pairs on both sides go first; of the rest, after the equal decoded values, the
+    leftovers go only when every decoded leftover on one side can stand for a <not decoded> one on the other side
+    (equal counts). Otherwise they all stay, so an added, removed or changed constant of that name is still shown.
+    Returns (x, y, {name: constants not compared})."""
+    names = {n for n, v in (*x, *y) if v == K.NOT_DECODED}
+    if not names:
+        return x, y, {}
+    x, y, skipped = Counter(x), Counter(y), {}
+    for n in sorted(names):
+        key = (n, K.NOT_DECODED)
+        both = min(x[key], y[key])
+        x[key] -= both
+        y[key] -= both
+        x, y = +x, +y                                  # drop zero counts
+        xs = Counter({v: c for v, c in x.items() if v[0] == n})
+        ys = Counter({v: c for v, c in y.items() if v[0] == n})
+        eq = xs & ys
+        lx, ly = xs - eq, ys - eq
+        tx, ty = sum(lx.values()), sum(ly.values())
+        gone = both
+        if tx and tx == ty and tx - lx[key] <= ly[key] and ty - ly[key] <= lx[key]:
+            x, y = x - lx, y - ly
+            gone += tx
+        if gone:
+            skipped[n] = gone
+    return x, y, skipped
+
+
+def fact_delta(a, b, cap=12, skipped=None):
+    """['field: +x, -y', ...] for the fields whose multisets differ ("(x2)" = twice). Constants that cannot be compared
+    (value not decoded) are left out and counted in skipped ({name: n}) when given."""
     def item(sign, v, n):
+        v = "=".join(v) if isinstance(v, tuple) else v
         v = v if len(v) <= 120 else v[:117] + "..."
         return f"{sign}{v}{f' (x{n})' if n > 1 else ''}"
     parts = []
     for k in dict.fromkeys([*a, *b]):
         x, y = a.get(k, Counter()), b.get(k, Counter())
+        if k == "constants":
+            x, y, nd = drop_undecoded(x, y)
+            if skipped is not None:
+                for n, c in nd.items():
+                    skipped[n] = skipped.get(n, 0) + c
         if x != y:
             ch = [item("+", v, n) for v, n in sorted((y - x).items())] + [item("-", v, n) for v, n in sorted((x - y).items())]
             parts.append(f"{k}: {', '.join(ch[:cap])}{f' +{len(ch) - cap} more' if len(ch) > cap else ''}")
@@ -533,7 +602,9 @@ def card_delta(old_path, new_path):
     for the VI outside its handler frames and per handler frame. Wiring is not compared."""
     va, fa = delta_facts(old_path)
     vb, fb = delta_facts(new_path)
-    rows = [f"  (VI) {x}" for x in fact_delta(va, vb)]
+    nd = {}
+    rows = [f"  (VI) {x}" for x in fact_delta(va, vb, skipped=nd)]
+    unknown = [f"{n}{f' (x{c})' if c > 1 else ''} in (VI)" for n, c in nd.items()]
     same = both = 0
     for a, b in pair_frames(fa, fb):
         if b is None:
@@ -542,16 +613,20 @@ def card_delta(old_path, new_path):
             rows.append(f"  + frame {frame_head(b)}: {' | '.join(fact_delta({}, fb[b])) or '-'}")
         else:
             both += 1
-            ch = fact_delta(fa[a], fb[b])
+            nd = {}
+            ch = fact_delta(fa[a], fb[b], skipped=nd)
+            unknown += [f"{n}{f' (x{c})' if c > 1 else ''} in {frame_head(b)}" for n, c in nd.items()]
             if ch:
                 rows.append(f"  ~ frame {frame_head(b)}: {' | '.join(ch)}")
             else:
                 same += 1
     tail = f" ({same} of {both} frames unchanged)" if both else ""
+    note = ([f"  ? constants not compared, value not decoded by the exporter: {', '.join(unknown)}"]
+            if unknown else [])
     if not rows:
-        return (f"CARD DELTA: none - terminals, calls, primitives, constants, cases, messages, tags and events equal"
-                f"{tail}; wiring is not compared (per-uid diff below)")
-    return "\n".join([f"CARD DELTA (matched by name, independent of uids; wiring not compared){tail}:"] + rows)
+        return "\n".join([f"CARD DELTA: none - terminals, calls, primitives, constants, cases, messages, tags and events "
+                          f"equal{tail}; wiring is not compared (per-uid diff below)"] + note)
+    return "\n".join([f"CARD DELTA (matched by name, independent of uids; wiring not compared){tail}:"] + rows + note)
 
 
 def diff_report(old_path, new_path):
