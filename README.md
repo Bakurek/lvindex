@@ -103,9 +103,11 @@ project's repository. It holds:
 3. Run `update <vi> <export.xml>` to see the diff, store the export and self-check it against the saved file
    (`update --dir <folder>` does this for every export in a folder; of several exports of one VI only the newest is
    applied. An export is matched to its VI by the path hash labview-mcp puts into the file name, else by the VI name
-   in the export; a name shared by several VIs outside any class is refused, pass those with `update <vi> <xml>`). The diff starts with a CARD DELTA: terminals, calls, primitives, constants, case selectors, messages
-   and events, for the VI and per handler frame, compared by name, so it also shows what changed when a
-   regeneration renumbered every uid. It does not compare wiring; the semantic diff per uid that follows does.
+   in the export; a name that fits several VIs is refused, and a name-only match with SELF-CHECK MISMATCH is not
+   stored: pass those with `update <vi> <xml>`). The diff starts with a CARD DELTA: terminals, calls, primitives,
+   constants, case selectors, messages and events, for the VI and per handler frame, compared by name, so it also
+   shows what changed when a regeneration renumbered every uid. It does not compare wiring; the semantic diff per
+   uid that follows does.
    `--backend <name>` records which exporter made the export, so a later backend change is pointed out.
 4. Read the diff and the cards, plus `card <vi> --xml <frame>` for the one case you need, instead of the whole VI.
 

@@ -55,7 +55,7 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
    refuse it); an edit of such a VI is the user's, in LabVIEW.
 4. `update <vi> <export.xml> --backend <name>` for each, or `update --dir <folder> --backend <name>` for all exports
    in a folder; `<name>` is the `backend` the export tool answered (e.g. grpc). With `--dir`, of several exports of
-   one VI only the newest is applied, the others print `SKIPPED`; `NO UNIQUE VI` (same-name VIs outside any class) and
+   one VI only the newest is applied, the others print `SKIPPED`; `NO UNIQUE VI` (a name that fits several VIs) and
    `NOT STORED` (matched by name only, SELF-CHECK MISMATCH) store nothing - run `update <vi> <xml>` for those after
    checking which VI the export belongs to. Read the CARD DELTA first. It matches by name, not by uid, so it stays
    valid when a regeneration renumbered every uid. It compares terminals (name, connector index, type), calls,
