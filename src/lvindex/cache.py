@@ -429,16 +429,17 @@ def own_facts(m, scope, skip):
                 f["primitives"][c.get("_name") or c.tag] += 1
             elif c.tag == "Constant":
                 f["constants"][f"{c.get('_name') or 'const'}={c.get('value', '')[:60]}"] += 1
-            elif c.tag == "CaseFrame":
-                f["cases"][f"[{K.unesc(c.get('selector'))}]"] += 1
+            elif c.tag == "CaseFrame":                      # "Error .." = "Error" (a regeneration respells it)
+                sel = K.unesc(c.get("selector"))
+                f["cases"][f"[{'Error' if sel == 'Error ..' else sel}]"] += 1
             walk(c)
     walk(scope)
     return f
 
 
 def delta_facts(path):
-    """(facts of the VI outside its handler frames, {(kind, name, parent, n): (frame, facts)}). n numbers frames
-    sharing kind, name and parent, in document order."""
+    """(facts of the VI outside its handler frames, {(kind, name, parent, n): facts}). n numbers frames sharing
+    kind, name and parent, in document order (pair_frames does not rely on it)."""
     m = K.Model(path)
     hf = K.handler_frames(m)
     skip = {f for *_, f in hf}
@@ -452,6 +453,7 @@ def delta_facts(path):
           "status consts": Counter(c["results"]), "dynamic": Counter(c["dynamic"])}
     frames, seen = {}, Counter()
     for kind, n, parent, f in hf:
+        n = "Error" if n == "Error .." else n
         seen[(kind, n, parent)] += 1
         frames[(kind, n, parent, seen[(kind, n, parent)])] = own_facts(m, f, skip)
     return vi, frames
@@ -476,27 +478,48 @@ def frame_head(k):
     return f"[{n}]" + (f" (in {parent})" if parent else "") + (" event" if kind == "event" else "")
 
 
+def fact_cost(a, b):
+    return sum(sum(((a.get(k, Counter()) - b.get(k, Counter())) + (b.get(k, Counter()) - a.get(k, Counter()))).values())
+               for k in set(a) | set(b))
+
+
+def pair_frames(fa, fb):
+    """[(old key | None, new key | None)]: frames paired by kind, name and parent; frames sharing those are paired
+    by the smallest difference, not by position (a regeneration may reorder the frames of a structure)."""
+    group = lambda fr: {k[:3]: [x for x in fr if x[:3] == k[:3]] for k in fr}  # noqa: E731
+    ga, gb = group(fa), group(fb)
+    out = []
+    for g in dict.fromkeys([*ga, *gb]):
+        xa, xb = list(ga.get(g, [])), list(gb.get(g, []))
+        for _, a, b in sorted((fact_cost(fa[a], fb[b]), a, b) for a in xa for b in xb):
+            if a in xa and b in xb:
+                out.append((a, b))
+                xa.remove(a)
+                xb.remove(b)
+        out += [(a, None) for a in xa] + [(None, b) for b in xb]
+    return out
+
+
 def card_delta(old_path, new_path):
     """What changed between two exports, matched by name instead of uid, so it also holds for a regenerated VI:
     terminals (name, connector index, type), calls, primitives, constants, case selectors, messages, tags and events,
-    for the VI outside its handler frames and per handler frame. Wiring is not compared. Frames that share kind,
-    name and parent are paired in document order."""
+    for the VI outside its handler frames and per handler frame. Wiring is not compared."""
     va, fa = delta_facts(old_path)
     vb, fb = delta_facts(new_path)
     rows = [f"  (VI) {x}" for x in fact_delta(va, vb)]
-    same = 0
-    for k in dict.fromkeys([*fa, *fb]):
-        if k not in fb:
-            rows.append(f"  - frame {frame_head(k)}")
-        elif k not in fa:
-            rows.append(f"  + frame {frame_head(k)}: {' | '.join(fact_delta({}, fb[k])) or '-'}")
+    same = both = 0
+    for a, b in pair_frames(fa, fb):
+        if b is None:
+            rows.append(f"  - frame {frame_head(a)}")
+        elif a is None:
+            rows.append(f"  + frame {frame_head(b)}: {' | '.join(fact_delta({}, fb[b])) or '-'}")
         else:
-            ch = fact_delta(fa[k], fb[k])
+            both += 1
+            ch = fact_delta(fa[a], fb[b])
             if ch:
-                rows.append(f"  ~ frame {frame_head(k)}: {' | '.join(ch)}")
+                rows.append(f"  ~ frame {frame_head(b)}: {' | '.join(ch)}")
             else:
                 same += 1
-    both = len(set(fa) & set(fb))
     tail = f" ({same} of {both} frames unchanged)" if both else ""
     if not rows:
         return (f"CARD DELTA: none - terminals, calls, primitives, constants, cases, messages, tags and events equal"

@@ -80,6 +80,30 @@ class Diff(unittest.TestCase):
         self.assertIn("- frame [Stop]", out)
         self.assertIn("+ frame [Halt]: constants: +stop=false", out)
 
+    def test_error_case_respelled(self):
+        text = BASE.replace('<CaseFrame selector="Default"', '<CaseFrame selector="Error"')
+        self.base_err = self.write("base_err", text)
+        env = {**os.environ, "LVINDEX_PROJECT": self.tmp.name, "PYTHONIOENCODING": "utf-8"}
+        r = subprocess.run([sys.executable, "-I", LVINDEX, "semdiff", self.base_err,
+                            self.write("err_dots", text.replace('selector="Error"', 'selector="Error .."'))],
+                           env=env, capture_output=True, encoding="utf-8")
+        self.assertIn("CARD DELTA: none", r.stdout)
+
+    def test_duplicate_frames_reordered(self):
+        start = BASE.index('  <Structure _name="While Loop"')
+        end = BASE.rindex("</VI>")
+        loop = BASE[start:end]
+        loop2 = renumber(loop, 500).replace('value="100"', 'value="300"')
+        before = BASE[:start] + loop + loop2 + BASE[end:]
+        after = BASE[:start] + renumber(loop2, 2000) + renumber(loop, 2000) + BASE[end:]
+        Diff.base = self.write("dup_base", before)
+        try:
+            out = self.diff("dup_swapped", after)
+        finally:
+            Diff.base = self.write("base", BASE)
+        self.assertIn("CARD DELTA: none", out)
+        self.assertIn("(6 of 6 frames unchanged)", out)
+
     def test_growth_is_not_regeneration(self):
         extra = "".join(f'<Constant _name="k{i}" outputs="" type="int32" uid="{90 + i}" uid_parent="30" value="{i}"/>'
                         for i in range(20))
