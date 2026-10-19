@@ -93,12 +93,9 @@ def _walk_up(start, fn):
         d = up
 
 
-def discover():
-    """(kind, path): kind 'toml' or 'lvproj'."""
-    env = os.environ.get("LVINDEX_PROJECT")
-    if not env and os.environ.get("VI_PROJECT"):
-        env = os.environ["VI_PROJECT"]
-        print("WARNING: env VI_PROJECT is the old name, use LVINDEX_PROJECT", file=sys.stderr)
+def find():
+    """(kind, path) with kind 'toml' or 'lvproj', or ("", why none was found); prints and exits nothing."""
+    env = os.environ.get("LVINDEX_PROJECT") or os.environ.get("VI_PROJECT")
     if env:
         if os.path.isfile(env):
             return ("toml", env) if env.lower().endswith(".toml") else ("lvproj", env)
@@ -108,16 +105,27 @@ def discover():
         hit = _lvprojs(env)
         if hit:
             return "lvproj", hit
-        sys.exit(f"LVINDEX_PROJECT={env}: no {NAME} and no single .lvproj there")
+        return "", f"LVINDEX_PROJECT={env}: no {NAME} and no single .lvproj there"
     hit = _walk_up(os.getcwd(), _toml_in)
     if hit:
         return "toml", hit
     hit = _outermost(os.getcwd(), _lvprojs)
     if hit:
-        print(f"(project: zero-config from {hit})", file=sys.stderr)
         return "lvproj", hit
-    sys.exit(f"no LabVIEW project found from {os.getcwd()}: run from inside a project, or pass "
-             f"--project <folder|{NAME}>")
+    return "", (f"no LabVIEW project found from {os.getcwd()}: run from inside a project, or pass "
+                f"--project <folder|{NAME}>")
+
+
+def discover():
+    """(kind, path): kind 'toml' or 'lvproj'; exits when there is no project."""
+    if not os.environ.get("LVINDEX_PROJECT") and os.environ.get("VI_PROJECT"):
+        print("WARNING: env VI_PROJECT is the old name, use LVINDEX_PROJECT", file=sys.stderr)
+    kind, path = find()
+    if not kind:
+        sys.exit(path)
+    if kind == "lvproj" and not os.environ.get("LVINDEX_PROJECT") and not os.environ.get("VI_PROJECT"):
+        print(f"(project: zero-config from {path})", file=sys.stderr)
+    return kind, path
 
 
 def _root(kind, path):

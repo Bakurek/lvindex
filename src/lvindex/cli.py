@@ -91,5 +91,11 @@ def main(argv=None):
     if argv[1:2] == ["--version"]:               # also outside a project: cache.py, which needs one, is not imported
         print(version_text())
         return
+    if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
+        from . import config
+        kind, why = config.find()
+        if not kind:                             # outside a project: the core manual, and why there is no project
+            from . import manual
+            sys.exit(f"{manual.TEXT}\n{why}")
     from . import cache
     cache.main(argv)

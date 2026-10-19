@@ -61,6 +61,9 @@ output as facts extracted with care, not as a guarantee. Heuristic parts are lab
   (LabVIEW running) and pylabview (no LabVIEW needed; the diffs list the constants it could not decode as not
   compared, and a few node kinds are missing from its exports). The skeleton and the queries built on it work without
   any export.
+- LabVIEW files saved by LabVIEW 2015 to 2026 Q3. The binary reader was run over six real projects, about 4,700
+  `.vi` / `.ctl` files (most saved by 2020, 2021, 2024 Q3 and 2025 Q3), without an unreadable file, and the query
+  outputs on those projects are compared with stored ones. LabVIEW itself is not needed for the skeleton.
 - Windows (the only platform tested).
 
 ## Quick start
@@ -203,6 +206,7 @@ path of an lvindex executable or of a checkout's `lvindex.py`). Setup for Claude
 | `skeleton.py` | project skeleton from the binaries: owners, calls, dispatch, fingerprints |
 | `cards.py` | cards and handler frames from AIXML |
 | `cache.py` | cache, check / update / semantic diff, command dispatch |
+| `manual.py` | the manual `lvindex` prints without a command |
 | `query.py` | index queries |
 | `config.py` | project discovery and configuration |
 | `ext.py` | extension loader and API |
@@ -213,7 +217,7 @@ fingerprints on synthetic type blocks, check / update / repair through the CLI o
 `python -I tests/golden.py <suite.toml> [--update]` compares query outputs on a real project with stored ones
 (the suite format is in its docstring; keep suites of private projects out of the repository).
 
-Design notes and known gaps: [ROADMAP.md](ROADMAP.md).
+Design notes and known gaps: [ROADMAP.md](ROADMAP.md). Changes per release: [CHANGELOG.md](CHANGELOG.md).
 
 LabVIEW is a trademark of National Instruments / Emerson. This project is not affiliated with NI.
 

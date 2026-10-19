@@ -287,6 +287,16 @@ class Cache(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertRegex(r.stdout, r"^lvindex \d+\.\d+\.\d+")
 
+    def test_manual_outside_a_project(self):
+        env = {k: v for k, v in os.environ.items() if k not in ("LVINDEX_PROJECT", "VI_PROJECT")}
+        empty = os.path.join(self.tmp.name, "empty")
+        os.makedirs(empty)
+        for args in ([], ["--help"]):
+            r = subprocess.run([sys.executable, "-I", LVINDEX, *args], cwd=empty, env=env, capture_output=True,
+                               encoding="utf-8")
+            self.assertIn("Reviewing VIs", r.stderr)
+            self.assertIn("no LabVIEW project found", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,7 +56,7 @@
 
 ## Known gaps
 - CI does not exercise the binary readers (rsrc.py, skeleton.py) on real VI files: a format regression is visible
-  only in local golden runs. The LabVIEW save versions the readers were validated on are not recorded.
+  only in local golden runs (the save versions those runs cover are listed in the README requirements).
 - Configuration is read at import time (module globals in cache.py, query.py, cards.py): no in-process use as a
   library, no in-process tests across projects, and it stands in the way of `--json` and an MCP wrapper.
 - Pane DEPS?: a typedef terminal of a subVI counts by name only, its content is caught only when the caller links
