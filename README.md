@@ -84,8 +84,17 @@ project's repository. It holds:
 1. Save the VI in LabVIEW, then run `check <vi>`. It prints UNCHANGED, SAME, CHANGED or NEW, and adds `DEPS?` when a
    typedef or the class private data changed since the export.
 2. Export only the CHANGED / NEW VIs to AIXML.
-3. Run `update <vi> <export.xml>` to see the semantic diff, store the export and self-check it against the saved file.
+3. Run `update <vi> <export.xml>` to see the diff, store the export and self-check it against the saved file. The
+   diff starts with a CARD DELTA: terminals, calls, primitives, constants, case selectors, messages and events,
+   for the VI and per handler frame, compared by name, so it also shows what changed when a regeneration
+   renumbered every uid. It does not compare wiring; the semantic diff per uid that follows does.
 4. Read the diff and the cards, plus `card <vi> --xml <frame>` for the one case you need, instead of the whole VI.
+
+## Using it from an AI assistant
+
+[skills/lvindex/SKILL.md](skills/lvindex/SKILL.md) is the usage contract for an assistant: index before reading a
+VI, callers before editing, check / export / update and the CARD DELTA after an edit. For Claude Code copy the
+`skills\lvindex` folder to `%USERPROFILE%\.claude\skills\` (all projects) or to the project's `.claude\skills\`.
 
 ## Files
 

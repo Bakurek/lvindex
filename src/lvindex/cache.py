@@ -12,8 +12,11 @@ Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memo
                         "(unknown at export)" = saved after the export before its state was recorded: re-export,
                         or `ackdeps` after checking it
   (export CHANGED/NEW with lvai_convert_vis_to_aixml refresh=true into the scratchpad)
-  update <vi> <aixml>   semantic diff vs the cached export (per stable uid: + - ~, wires resolved), store it,
-                        SELF-CHECK of the export against the saved file; refuses if the VI was saved during export
+  update <vi> <aixml>   diff vs the cached export, store it, SELF-CHECK of the export against the saved file;
+                        refuses if the VI was saved during export. The diff: CARD DELTA (terminals, calls, primitives,
+                        constants, cases, messages, events - for the VI and per handler frame, matched by name, so also
+                        valid when a regeneration changed every uid; no wiring), then the semantic diff per stable uid
+                        (+ - ~, wires resolved)
   seed <vi> <aixml>     store an export without diff (VI not saved after the export)
 
 Understanding the program (skeleton = all VIs from the binary files, no export; card = facts of an exported VI):
@@ -54,6 +57,7 @@ import re
 import sys
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter
 
 from . import cards as K
 from . import config
@@ -369,6 +373,7 @@ def desc(model, e):
 
 def semdiff(old_path, new_path):
     A, B = parse(old_path), parse(new_path)
+    kept = len(set(A[0]) & set(B[0]))                  # old uids still present
     rows = []
     for u in sorted(set(A[0]) | set(B[0]), key=int):
         if u in A[0] and u not in B[0]:
@@ -389,6 +394,9 @@ def semdiff(old_path, new_path):
                 rows.append((B[2][u], "~", f"{label(eb)} " + "; ".join(f"{k}: {o} -> {n}" for k, (o, n) in ch.items())))
     rows.sort(key=lambda r: " > ".join(r[0]))
     out, last = [], None
+    if rows and A[0] and kept < len(A[0]) / 2:
+        out.append(f"(only {100 * kept // len(A[0])}% of the old uids are left - probably a regenerated VI: the rows "
+                   f"below list most objects as removed and added; the CARD DELTA shows what changed, except wiring)")
     for path, op, text in rows:
         p = " > ".join(path) or "(top)"
         if p != last:
@@ -396,6 +404,103 @@ def semdiff(old_path, new_path):
             last = p
         out.append(f"  {op} {text}")
     return "\n".join(out)
+
+
+def own_facts(m, scope, skip):
+    """Multisets of the objects in scope, not looking into the handler frames in skip: calls (with the polymorphic
+    instance), primitives and structures, constants (label=value), case selectors."""
+    f = {k: Counter() for k in ("calls", "primitives", "constants", "cases")}
+
+    def walk(e):
+        for c in e:
+            if c in skip:
+                continue
+            if c.tag == "Call":
+                inst = K.unesc(c.get("instance")).split(":")[-1]
+                f["calls"][K.target(c) + (f" [{inst}]" if inst else "")] += 1
+            elif c.tag in ("Node", "Structure"):
+                f["primitives"][c.get("_name") or c.tag] += 1
+            elif c.tag == "Constant":
+                f["constants"][f"{c.get('_name') or 'const'}={c.get('value', '')[:60]}"] += 1
+            elif c.tag == "CaseFrame":
+                f["cases"][f"[{K.unesc(c.get('selector'))}]"] += 1
+            walk(c)
+    walk(scope)
+    return f
+
+
+def delta_facts(path):
+    """(facts of the VI outside its handler frames, {(kind, name, parent, n): (frame, facts)}). n numbers frames
+    sharing kind, name and parent, in document order."""
+    m = K.Model(path)
+    hf = K.handler_frames(m)
+    skip = {f for *_, f in hf}
+    c = K.card_of(m, m.root, top=True)
+    vi = {"terminals": Counter(f"{'in' if e.tag == 'Control' else 'out'} {e.get('_name')} [{e.get('conIdx')}] "
+                               f"{e.get('type', '')}" for e in m.root
+                               if e.tag in ("Control", "Indicator") and e.get("conIdx")),
+          **own_facts(m, m.root, skip), "sends": Counter(c["sends"]),
+          **{f"{K.LABEL} {ro}": Counter(s) for ro, s in c["tags"].items()},
+          "events gen": Counter(c["events"]["gen"]), "events reg": Counter(c["events"]["reg"]),
+          "status consts": Counter(c["results"]), "dynamic": Counter(c["dynamic"])}
+    frames, seen = {}, Counter()
+    for kind, n, parent, f in hf:
+        seen[(kind, n, parent)] += 1
+        frames[(kind, n, parent, seen[(kind, n, parent)])] = own_facts(m, f, skip)
+    return vi, frames
+
+
+def fact_delta(a, b, cap=12):
+    """['field: +x, -y', ...] for the fields whose multisets differ ("(x2)" = twice)."""
+    def item(sign, v, n):
+        v = v if len(v) <= 120 else v[:117] + "..."
+        return f"{sign}{v}{f' (x{n})' if n > 1 else ''}"
+    parts = []
+    for k in dict.fromkeys([*a, *b]):
+        x, y = a.get(k, Counter()), b.get(k, Counter())
+        if x != y:
+            ch = [item("+", v, n) for v, n in sorted((y - x).items())] + [item("-", v, n) for v, n in sorted((x - y).items())]
+            parts.append(f"{k}: {', '.join(ch[:cap])}{f' +{len(ch) - cap} more' if len(ch) > cap else ''}")
+    return parts
+
+
+def frame_head(k):
+    kind, n, parent, _ = k
+    return f"[{n}]" + (f" (in {parent})" if parent else "") + (" event" if kind == "event" else "")
+
+
+def card_delta(old_path, new_path):
+    """What changed between two exports, matched by name instead of uid, so it also holds for a regenerated VI:
+    terminals (name, connector index, type), calls, primitives, constants, case selectors, messages, tags and events,
+    for the VI outside its handler frames and per handler frame. Wiring is not compared. Frames that share kind,
+    name and parent are paired in document order."""
+    va, fa = delta_facts(old_path)
+    vb, fb = delta_facts(new_path)
+    rows = [f"  (VI) {x}" for x in fact_delta(va, vb)]
+    same = 0
+    for k in dict.fromkeys([*fa, *fb]):
+        if k not in fb:
+            rows.append(f"  - frame {frame_head(k)}")
+        elif k not in fa:
+            rows.append(f"  + frame {frame_head(k)}: {' | '.join(fact_delta({}, fb[k])) or '-'}")
+        else:
+            ch = fact_delta(fa[k], fb[k])
+            if ch:
+                rows.append(f"  ~ frame {frame_head(k)}: {' | '.join(ch)}")
+            else:
+                same += 1
+    both = len(set(fa) & set(fb))
+    tail = f" ({same} of {both} frames unchanged)" if both else ""
+    if not rows:
+        return (f"CARD DELTA: none - terminals, calls, primitives, constants, cases, messages, tags and events equal"
+                f"{tail}; wiring is not compared (per-uid diff below)")
+    return "\n".join([f"CARD DELTA (matched by name, independent of uids; wiring not compared){tail}:"] + rows)
+
+
+def diff_report(old_path, new_path):
+    """Card delta first (short, survives regeneration), then the per-uid semantic diff."""
+    d = semdiff(old_path, new_path)
+    return card_delta(old_path, new_path) + "\n" + (d if d else "NO LOGICAL DIFF")
 
 
 # ---------------------------------------------------------------- cache commands
@@ -516,8 +621,7 @@ def update(vi, aixml):
             print("REFUSED: VI was saved during/after the export - run check and export again")
             return
         if e.get("xml") and os.path.exists(e["xml"]):
-            d = semdiff(e["xml"], aixml)
-            print(d if d else "NO LOGICAL DIFF")
+            print(diff_report(e["xml"], aixml))
         else:
             print("NO CACHED VERSION - read the full export")
         out, prev = store(idx, vi, aixml, now)
@@ -643,7 +747,7 @@ def main(argv):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     cmds = {"check": (lambda p, o: check(p), 1, 999), "update": (lambda p, o: update(*p), 2, 2),
             "seed": (lambda p, o: seed(*p), 2, 2), "ackdeps": (lambda p, o: ackdeps(p), 1, 999),
-            "show": (lambda p, o: show(*p), 1, 1), "semdiff": (lambda p, o: print(semdiff(*p)), 2, 2),
+            "show": (lambda p, o: show(*p), 1, 1), "semdiff": (lambda p, o: print(diff_report(*p)), 2, 2),
             "skeleton": (lambda p, o: skeleton("--full" if o.get("--full") else ""), 0, 0),
             "repair": (lambda p, o: repair(), 0, 0), "recard": (lambda p, o: recard(), 0, 0),
             "list": (lambda p, o: listing(), 0, 0),
