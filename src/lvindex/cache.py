@@ -7,7 +7,7 @@ Project: found from the current folder (.claude\\lvindex.toml, else a single *.l
 <vi> anywhere = a file path, "Class:File.vi", or a unique substring of a qualified name.
 
 Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memory, check looks at disk):
-  check <vi> [...]      UNCHANGED / SAME (hash equal) / CHANGED / NEW / MISSING, + DEPS? when a typedef the VI links
+  check <vi> [...]      UNCHANGED / SAME (hash equal) / CHANGED / NEW, + DEPS? when a typedef the VI links
                         (also nested), its own class's private data or the connector pane of a subVI it calls
                         ("pane <subVI>") changed since the cached export.
                         "(unknown at export)" = saved after the export before its state was recorded: re-export,

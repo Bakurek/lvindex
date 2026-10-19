@@ -39,8 +39,10 @@ output as facts extracted with care, not as a guarantee. Heuristic parts are lab
 
 - Python 3.11+, standard library only.
 - For cards and diffs: AIXML exports of VIs. The tools were built against exports made with `lvai_convert_vis_to_aixml`
-  of the [labview-mcp](https://github.com/Zuehlke/labview-mcp) plugin for Claude. The skeleton and the queries built on it work
-  without any export.
+  of the [labview-mcp](https://github.com/Zuehlke/labview-mcp) plugin for Claude, from both of its backends: grpc
+  (LabVIEW running) and pylabview (no LabVIEW needed; the diffs list the constants it could not decode as not
+  compared, and a few node kinds are missing from its exports). The skeleton and the queries built on it work without
+  any export.
 - Windows (the only platform tested).
 
 ## Quick start
@@ -93,14 +95,21 @@ project's repository. It holds:
 
 ## Workflow for VI review
 
-1. Save the VI in LabVIEW, then run `check <vi>`. It prints UNCHANGED, SAME, CHANGED or NEW, and adds `DEPS?` when a
-   typedef, the class private data or the connector pane of a called subVI changed since the export.
+1. Save the VI in LabVIEW, then run `check <vi>` (`--with-callers` adds its direct callers). It prints UNCHANGED,
+   SAME, CHANGED or NEW, and adds `DEPS?` when a typedef, the class private data or the connector pane of a
+   called subVI changed since the export.
 2. Export only the CHANGED / NEW VIs to AIXML.
-3. Run `update <vi> <export.xml>` to see the diff, store the export and self-check it against the saved file. The
-   diff starts with a CARD DELTA: terminals, calls, primitives, constants, case selectors, messages and events,
-   for the VI and per handler frame, compared by name, so it also shows what changed when a regeneration
-   renumbered every uid. It does not compare wiring; the semantic diff per uid that follows does.
+3. Run `update <vi> <export.xml>` to see the diff, store the export and self-check it against the saved file
+   (`update --dir <folder>` does this for every export in a folder; of several exports of one VI only the newest is
+   applied). The diff starts with a CARD DELTA: terminals, calls, primitives, constants, case selectors, messages
+   and events, for the VI and per handler frame, compared by name, so it also shows what changed when a
+   regeneration renumbered every uid. It does not compare wiring; the semantic diff per uid that follows does.
+   `--backend <name>` records which exporter made the export, so a later backend change is pointed out.
 4. Read the diff and the cards, plus `card <vi> --xml <frame>` for the one case you need, instead of the whole VI.
+
+If the cache gets out of step, `repair` re-adopts the exports in `xml\` that no index entry points to, and `recard`
+rebuilds all cards from the stored exports. A corrupt `index.json` is kept as `index.json.corrupt-<time>`, not
+overwritten; `repair` then restores the entries from `xml\`.
 
 ## Using it from an AI assistant
 
@@ -121,7 +130,8 @@ VI, callers before editing, check / export / update and the CARD DELTA after an 
 | `ext.py` | extension loader and API |
 | `cli.py` | command line entry point (`lvindex`, `python -m lvindex`, `lvindex.py`) |
 
-Tests: `python -I -m unittest discover -s tests` (diffs on hand-written AIXML, runs in CI);
+Tests: `python -I -m unittest discover -s tests` (runs in CI: diffs on hand-written AIXML, connector-pane
+fingerprints on synthetic type blocks, check / update / repair through the CLI on a temporary zero-config project);
 `python -I tests/golden.py <suite.toml> [--update]` compares query outputs on a real project with stored ones
 (the suite format is in its docstring; keep suites of private projects out of the repository).
 

@@ -42,7 +42,8 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
 ## After an edit (labview-mcp regeneration, or the user editing in LabVIEW)
 
 1. The VI must be saved: `check` reads the file on disk, an export may come from LabVIEW memory.
-2. `check <vi>` (`--with-callers` also checks its direct callers). UNCHANGED / SAME = nothing to do; CHANGED / NEW = export; `DEPS?` = a typedef or the class
+2. `check <vi>` (`--with-callers` also checks its direct callers). UNCHANGED / SAME = nothing to do; CHANGED / NEW =
+   export; `DEPS?` = a typedef or the class
    private data changed since the export: export again, or `ackdeps <vi>` after checking it does not matter;
    `DEPS? ... (unknown at export)` = the dependency was saved after the export before its state was recorded, same
    choice. `DEPS? pane <subVI>` = the connector pane of a called subVI changed (terminal added, removed, renamed,
@@ -51,7 +52,8 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
    A class member with class-typed terminals cannot be regenerated through AIXML at all (both labview-mcp backends
    refuse it); an edit of such a VI is the user's, in LabVIEW.
 4. `update <vi> <export.xml> --backend <name>` for each, or `update --dir <folder> --backend <name>` for all exports
-   in a folder; `<name>` is the `backend` the export tool answered (e.g. grpc). Read the CARD DELTA first. It matches by name, not by uid, so it stays
+   in a folder; `<name>` is the `backend` the export tool answered (e.g. grpc). With `--dir`, of several exports of
+   one VI only the newest is applied, the others print `SKIPPED`. Read the CARD DELTA first. It matches by name, not by uid, so it stays
    valid when a regeneration renumbered every uid. It compares terminals (name, connector index, type), calls,
    primitives, constants, case selectors, messages, tags and events, for the VI outside its handler frames `(VI)`
    and per handler frame. Confirm that only the intended frames changed. Anything else (a call lost, a frame gone,
@@ -71,5 +73,6 @@ Markers: `(no card)` = never exported, `(card stale)` = saved after its export, 
 
 - Run `lvindex trust`, which allows a project's extension code to run, unless the user asked for it and you have
   read the extension file.
-- Edit anything in the cache folder (`.index`) by hand; `repair` and `recard` fix it.
+- Edit anything in the cache folder (`.index`) by hand; `repair` and `recard` fix it. After `WARNING: index.json
+  corrupt` run `repair` once; tell the user, the old file is kept next to it.
 - Present a list from `callers`, `unexported` or `find` as complete for VIs called dynamically.

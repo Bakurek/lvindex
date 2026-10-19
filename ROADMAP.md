@@ -7,7 +7,16 @@
   optional BOM.
 - **Cache** per project in `<project root>\.index` (a new folder gets `.gitignore` = `*`); `cache` in lvindex.toml
   overrides it. index.json stores export names relative to `xml\` and keys relative to `src`, so both the cache folder
-  and the project can be moved (older absolute keys are migrated on load, also after a move).
+  and the project can be moved (older absolute keys are migrated on load, also after a move). Writes hold
+  `index.lock`; a corrupt index.json is kept as `index.json.corrupt-<time>` and `repair` re-adopts the exports. A
+  CHANGED seen by `check` is recorded as pending and cleared when the file is back to its exported state, so a
+  reverted edit does not block `update`.
+- **Binary layer**: the skeleton comes from lvindex's own RSRC reader, not from pylabview. Measured on 70 files of
+  two projects: pylabview read all of them, but left the qualified names of the dispatch, typedef and private-data
+  link records (DyOM, TCPI, FPPI, DDPI) as raw bytes - exactly the records the skeleton is built from - and took
+  about 0.5 s per file against about 6 ms (a full build of a ~450-VI project would grow from 2.6 s to minutes).
+  pylabview is used through labview-mcp for AIXML exports without LabVIEW only; the core stays standard library
+  only.
 - **Config hash**: only `skip` and `tags.literal` invalidate the skeleton; the card signature covers the card-related
   settings, so cards are rebuilt from the stored XML when they change.
 - **Optional layers**, off when the section is absent: `[tags]` (literal regex + roles), `[messages]` (enqueue /
@@ -40,7 +49,8 @@
   skeleton facts of the source files between git revisions and reads git only (ls-tree, hash-object without `-w`,
   cat-file); `msgs` only with `[messages]`; extension commands only when the extension is listed and trusted.
   `--max-tokens` caps any output in whole lines.
-- **Tests**: CI runs ruff and unit tests on hand-written AIXML and synthetic type blocks (windows-latest). The binary
+- **Tests**: CI runs ruff and unit tests on hand-written AIXML, synthetic type blocks and the cache commands on a
+  temporary zero-config project (windows-latest). The binary
   readers are checked locally against real projects with `tests/golden.py`; those suites and their outputs stay
   outside the repository, because project VIs cannot be published.
 
@@ -53,6 +63,8 @@
   that typedef itself (usually true when it wires the terminal); refnum element types are resolved heuristically;
   a VI whose pane type is not a plain function type is not tracked. Caches from before the pane check track panes
   from the first `check` after the upgrade.
+- A typedef fingerprint is the hash of the whole `.ctl`, so a resave without a change gives `DEPS?` (and shows in
+  `diff` as a content change).
 - The AIXML backend of an export is recorded only when `update` / `seed` get `--backend` (pointed out when both are
   known). The diffs normalise what exporters write differently (input order, unwired inputs, `\3A` / `\XX` escapes,
   constant values in wire sources); constants the pylabview reader does not decode are listed as not compared. What
@@ -76,20 +88,16 @@
 Ordered; each step is decided on what the previous one measured.
 1. **Measure use by an assistant** before adding layers: in real sessions, does it call lvindex or still read
    exports, which commands, where it falls back, and which wrong answers came from heuristics or stale cards.
-2. **Binary layer on pylabview** instead of the own RSRC reader: prototype the skeleton facts (links, dispatch
-   flags, connector pane, strings) from pylabview on real projects against the current output, and the build time.
-   Then decide between pylabview as a dependency and the copy bundled with labview-mcp, and what zero-config needs.
-   The "standard library only" property would end.
-3. **Configuration as a context object** instead of module globals: library use, in-process tests, `--json` on
+2. **Configuration as a context object** instead of module globals: library use, in-process tests, `--json` on
    queries, a thin MCP wrapper if step 1 shows a need.
-4. **Honest partial answers**: aggregate queries state how many relevant VIs lack a current card. An offline
-   VI -> AIXML reader from step 2 would give cards for unexported VIs; their agreement with LabVIEW exports to be
-   measured first.
-5. **Generality**: golden runs on Actor Framework, DQMH and JKI state-machine projects; judge the zero-config output
+3. **Honest partial answers**: aggregate queries state how many relevant VIs lack a current card. Cards for
+   unexported VIs can come from the pylabview reader without LabVIEW. Measured on the 133 cached VIs of a real
+   project: no failures, median 0.77 s per VI; of the 97 VIs unchanged since their LabVIEW export, 83 gave an empty
+   CARD DELTA against it, the other 14 differ by reader gaps (see Known gaps).
+4. **Generality**: golden runs on Actor Framework, DQMH and JKI state-machine projects; judge the zero-config output
    there; make `[actors] entry` an explicit setting.
-6. **Publishable binary fixtures** for CI, saved in more than one LabVIEW version (after step 2, since they depend
-   on the reader).
-7. Then, in about this order:
+5. **Publishable binary fixtures** for CI, saved in more than one LabVIEW version, so CI exercises the RSRC reader.
+6. Then, in about this order:
    - per-VI notes (intent, invariants) that survive re-export, starting with the VI documentation the cache now
      strips; location to be decided (versioned with the project, not in the cache);
    - lints that need no notes: a flag written and never read, a dynamically called VI, a magic constant, a
