@@ -18,7 +18,10 @@ Reviewing VIs (VI must be SAVED in LabVIEW first - the export may come from memo
                         constants, cases, messages, events - for the VI and per handler frame, matched by name, so also
                         valid when a regeneration changed every uid; no wiring), then the semantic diff per stable uid
                         (+ - ~, wires resolved)
-  update --dir <folder> the same for every export in a folder, matched to its VI by the name in the export
+  update --dir <folder> the same for every export in a folder, matched to its VI by the path hash in labview-mcp's
+                        file name (<VI>.<8 hex>.xml), else by the name in the export; a name that fits several VIs
+                        (same-name copies outside any class) is refused, and a name-only match with SELF-CHECK
+                        MISMATCH is not stored
   [--backend NAME]      on update / seed: the AIXML backend that made the export (labview-mcp answers it as
                         `backend`); a change of backend against the cached export is pointed out
   seed <vi> <aixml>     store an export without diff (VI not saved after the export)
@@ -728,10 +731,10 @@ def self_check(sk, q, xml_path):
     return ("SELF-CHECK MISMATCH - export from unsaved edits, or a skeleton heuristic broke: " + "; ".join(diffs) + note)
 
 
-def store(idx, vi, aixml, vi_meta, backend=None):
+def store(idx, vi, aixml, vi_meta, backend=None, check=None):
     """Write the stripped export under a content-unique name (a crash before the index save keeps the old XML
-    valid) and update the index entry (backend: the AIXML backend that made the export, None = not given).
-    Returns (new xml, previous xml)."""
+    valid) and update the index entry (backend: the AIXML backend that made the export, None = not given; check: the
+    SELF-CHECK line when the caller made it already). Returns (new xml, previous xml)."""
     os.makedirs(XMLDIR, exist_ok=True)
     with open(aixml, encoding="utf-8") as f:
         text = f.read()
@@ -750,7 +753,7 @@ def store(idx, vi, aixml, vi_meta, backend=None):
     idx[key(vi)] = {**vi_meta, "xml": out, "exported_at": t, "path": os.path.realpath(vi), "card": make_card(out),
                    "deps_fp": dep_baseline(sk, q, t) if q else {}, "deps_v": DEPS_V,
                    "backend": backend or idx.get(key(vi), {}).get("backend")}
-    print(self_check(sk, q, out))
+    print(check or self_check(sk, q, out))
     return out, prev
 
 
@@ -760,7 +763,9 @@ def drop_old(prev, out):
             os.remove(prev)
 
 
-def update(vi, aixml, backend=None):
+def update(vi, aixml, backend=None, by_name=False):
+    """by_name: the export was matched to the VI by its name only (update --dir): a SELF-CHECK MISMATCH then stores
+    nothing, since the export may belong to another VI of that name."""
     with locked():
         vi = find_vi(skel(), vi)
         if vi is None:
@@ -772,6 +777,12 @@ def update(vi, aixml, backend=None):
         if os.stat(vi).st_mtime > os.stat(aixml).st_mtime or (pend and pend["sha256"] != now["sha256"]):
             print("REFUSED: VI was saved during/after the export - run check and export again")
             return
+        check = self_check(skel(), qname(skel(), vi), aixml) if by_name else None
+        if check and check.startswith("SELF-CHECK MISMATCH"):
+            print(check)
+            print("NOT STORED: matched by name only and the export does not fit the saved file - if it is this VI's "
+                  "export, save the VI in LabVIEW and export again, or store it with update <vi> <xml>")
+            return
         if e.get("xml") and os.path.exists(e["xml"]):
             if backend and e.get("backend") and e["backend"] != backend:
                 print(f"NOTE: the cached export came from backend {e['backend']}, this one from {backend} - "
@@ -779,25 +790,46 @@ def update(vi, aixml, backend=None):
             print(diff_report(e["xml"], aixml))
         else:
             print("NO CACHED VERSION - read the full export")
-        out, prev = store(idx, vi, aixml, now, backend)
+        out, prev = store(idx, vi, aixml, now, backend, check)
         save(idx)
         drop_old(prev, out)
         print("XML:", out)
 
 
+def path_hash(vi):
+    """The 8 hex digits labview-mcp puts into an export's file name: MD5 of the lower-cased full VI path
+    (AixmlTools.ExportName). Both spellings of the path, in case the export was asked with the resolved one."""
+    return {hashlib.md5(p.lower().encode("utf-8")).hexdigest()[:8] for p in (os.path.abspath(vi), os.path.realpath(vi))}
+
+
 def export_target(sk, xml_path):
-    """VI path an export belongs to: the qualified name in the export's root element, else its file name
-    (labview-mcp writes '<VI name>.<8 hex>.xml'); None when it does not resolve to exactly one VI."""
+    """(VI path, how, why) for an export: how = "path" when the file name carries labview-mcp's path hash
+    ('<VI name>.<8 hex>.xml') of exactly one VI, "name" when the qualified name in the export's root element (else the
+    file name) fits exactly one VI; VI None (with why) otherwise. Same-name VIs outside any class or library (stray
+    copies) have the same name in the export, so only the path hash tells them apart."""
     with open(xml_path, encoding="utf-8", errors="replace") as f:
         m = re.search(r'<VI _name="([^"]*)"', f.read(2000))
-    name_ = K.unesc(m.group(1)) if m else ""
-    if name_:
-        q = S.canon(sk, ":".join(K.short(name_).split(":")[-2:]))       # innermost owner, as in cards
-        if q in sk["vis"]:
-            return entry_path(sk, q)
-    stem = re.sub(r"\.[0-9A-Fa-f]{8}$", "", os.path.splitext(os.path.basename(xml_path))[0])
-    cand = [q for q, v in sk["vis"].items() if os.path.splitext(os.path.basename(v["file"]))[0].lower() == stem.lower()]
-    return entry_path(sk, cand[0]) if len(cand) == 1 else None
+    name_ = ":".join(K.short(K.unesc(m.group(1))).split(":")[-2:]).lower() if m else ""   # innermost owner, as in cards
+    stem, h = re.match(r"(.*?)(?:\.([0-9A-Fa-f]{8}))?$", os.path.splitext(os.path.basename(xml_path))[0]).groups()
+    same_stem = [q for q, v in sk["vis"].items()
+                 if os.path.splitext(os.path.basename(v["file"]))[0].lower() == stem.lower()]
+    if h:
+        hit = [q for q in same_stem if h.lower() in path_hash(entry_path(sk, q))]
+        if len(hit) == 1:
+            return entry_path(sk, hit[0]), "path", None
+
+    def card_name(v):
+        own = sk["classes"].get(v.get("class") or "", {}).get("chain", [None])[-1]
+        fn = os.path.basename(v["file"])
+        return (f"{own}:{fn}" if own else fn).lower()
+    named = [q for q, v in sk["vis"].items() if card_name(v) == name_] if name_ else []
+    cand = named or same_stem
+    if len(cand) == 1:
+        return entry_path(sk, cand[0]), "name", None
+    if not cand:
+        return None, None, "no VI with this name"
+    shown = ", ".join(sorted(cand)[:6]) + (" ..." if len(cand) > 6 else "")
+    return None, None, f"{len(cand)} VIs with this name ({shown})" + (" and no path hash of one of them" if h else "")
 
 
 def update_dir(folder, backend=None):
@@ -808,18 +840,18 @@ def update_dir(folder, backend=None):
     if not files:
         print(f"no .xml exports in {folder}")
     found = [(fn, os.path.join(folder, fn)) for fn in files]
-    found = [(fn, p, export_target(sk, p)) for fn, p in found]
+    found = [(fn, p, *export_target(sk, p)) for fn, p in found]
     newest = {}
-    for fn, p, vi in found:
+    for fn, p, vi, how, why in found:
         if vi and (key(vi) not in newest or os.stat(p).st_mtime > os.stat(newest[key(vi)]).st_mtime):
             newest[key(vi)] = p
-    for fn, p, vi in found:
+    for fn, p, vi, how, why in found:
         if vi and newest[key(vi)] != p:
             print(f"===== {fn} -> {qname(sk, vi)}: SKIPPED, {os.path.basename(newest[key(vi)])} is a newer export of it")
             continue
-        print(f"===== {fn} -> {qname(sk, vi) if vi else 'NO UNIQUE VI - pass it as update <vi> <xml>'}")
+        print(f"===== {fn} -> {qname(sk, vi) if vi else f'NO UNIQUE VI ({why}) - pass it as update <vi> <xml>'}")
         if vi:
-            update(vi, p, backend)
+            update(vi, p, backend, by_name=how == "name")
 
 
 def seed(vi, aixml, backend=None):

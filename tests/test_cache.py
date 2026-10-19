@@ -5,6 +5,8 @@ is the hand-written tests/data/dispatcher.xml. File times are set with os.utime,
 Run: python -m unittest discover -s tests
 """
 import glob
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -98,6 +100,69 @@ class Cache(unittest.TestCase):
         out = self.run_cli("update", "--dir", d)
         self.assertEqual(out.count("SKIPPED"), 2, out)
         self.assertIn(f"===== {os.path.basename(newest)} -> ", out)
+
+    def stray(self, rel, data):
+        """A stand-in VI at proj\\<rel>, outside any class or library."""
+        p = os.path.join(self.proj, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(data)
+        os.utime(p, (self.t, self.t))
+        return p
+
+    def export_of(self, folder, name, body, vi_name="W.vi"):
+        p = os.path.join(folder, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(f'<VI _name="{vi_name}">\n{body}</VI>\n')
+        self.t += 10
+        os.utime(p, (self.t, self.t))
+        return p
+
+    @staticmethod
+    def mcp_name(vi):
+        """File name labview-mcp gives an export (AixmlTools.ExportName: MD5 of the lower-cased full path)."""
+        h = hashlib.md5(os.path.abspath(vi).lower().encode("utf-8")).hexdigest()[:8].upper()
+        return f"{os.path.splitext(os.path.basename(vi))[0]}.{h}.xml"
+
+    def cached_xml(self, vi):
+        index = os.path.join(self.proj, ".index", "index.json")
+        if not os.path.exists(index):
+            return None
+        with open(index, encoding="utf-8") as f:
+            idx = json.load(f)
+        e = idx.get(os.path.normcase(os.path.relpath(vi, self.proj)))
+        if not e:
+            return None
+        with open(os.path.join(self.proj, ".index", "xml", e["xml"]), encoding="utf-8") as f:
+            return f.read()
+
+    def test_update_dir_tells_same_name_stray_vis_apart(self):
+        a, b = self.stray(os.path.join("a", "W.vi"), b"stray a"), self.stray(os.path.join("b", "W.vi"), b"stray b!")
+        d = os.path.join(self.tmp.name, "exports")
+        os.makedirs(d)
+        const = '  <Constant type="string" uid="1" uid_parent="root" value="{}"/>\n'
+        self.export_of(d, self.mcp_name(b), const.format("from b"))
+        self.export_of(d, self.mcp_name(a), const.format("from a"))
+        self.export_of(d, "W.xml", const.format("no hash"))                  # same name, nothing to tell them apart
+        self.export_of(d, "W.DEADBEEF.xml", const.format("other path"))      # hash of neither
+        out = self.run_cli("update", "--dir", d)
+        self.assertEqual(out.count("NO UNIQUE VI (2 VIs with this name"), 2, out)
+        self.assertIn('value="from a"', self.cached_xml(a))
+        self.assertIn('value="from b"', self.cached_xml(b))
+        self.assertEqual(self.run_cli("check", a, b).count("UNCHANGED"), 2)
+
+    def test_update_dir_does_not_store_a_name_match_that_fails_the_self_check(self):
+        self.stray("B.vi", b"callee")
+        d = os.path.join(self.tmp.name, "exports")
+        os.makedirs(d)
+        x = self.export_of(d, "A.xml", '  <Call target="B.vi" uid="1" uid_parent="root"/>\n', vi_name="A.vi")
+        out = self.run_cli("update", "--dir", d)
+        self.assertIn("SELF-CHECK MISMATCH", out)
+        self.assertIn("NOT STORED", out)
+        self.assertIsNone(self.cached_xml(self.vi))
+        out = self.run_cli("update", self.vi, x)                          # named explicitly: stored, mismatch shown
+        self.assertIn("SELF-CHECK MISMATCH", out)
+        self.assertIn("XML:", out)
 
     def test_unknown_command_and_option_are_short_and_point_at_an_upgrade(self):
         out = self.run_cli("nosuch")
