@@ -21,6 +21,11 @@ guesses - say so when you pass them on.
    matching frames only).
 4. Export a VI only for what these cannot answer.
 
+`card`, `ctx` and `msgs` may show a `summary` line written by an earlier session: use it to decide what to read, never
+as evidence (the card and the XML are); `[summary, STALE ...]` describes an older version of the VI. A `note` is the
+user's answer and outranks a summary. Before writing summaries (`summary template` / `set`) read `semantic.md` in this
+skill's folder.
+
 Finding your way: `overview` (entry points, classes, message loops), `find <term>` (`-s` also free text), `msgs [name]`
 (sender -> queue -> handler), `path <a> <b>`, `diff <ref> [<ref2>]` (skeleton facts changed between git revisions).
 Markers: `(no card)` = never exported; `(card stale)` = saved after its export, do not rely on it; `(not in lvclass)`

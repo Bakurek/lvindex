@@ -55,6 +55,23 @@ Understanding the program (skeleton = all VIs from the binary files, no export; 
                         class parents and members; a typedef shows any resave as a content change
   path <a> <b> [-n N]   shortest call paths from a down to b (dispatch expanded; with [messages] + [actors] also
                         message hops sender -> owning actor's entry VI, from current cards)
+
+VI summaries (written by the assistant from a VI's card and export; lvindex stores, checks and serves them, it never
+writes one and calls no model). card / ctx / msgs show them, find searches them when no fact matches; each line
+says [summary] or [summary, STALE: VI changed <date>]. A summary points at what to read, it is not evidence:
+  summary template <vi>       JSON to fill (handler frame names from the card) and the writing rules; only for a VI
+                              in the state of its cached export
+  summary set <file.json>     store {"<vi>": {purpose, behavior[], frames{}, questions[]}, ...} (several VIs per
+                              file); refused: unknown VI name, malformed entry, VI not exported or changed since its
+                              export, a frame name not in the card, purpose + behavior over 1000 characters; warned:
+                              over 700, a frame line over 160, a `backticked` name found nowhere in the card, export
+                              or skeleton (catches invented names, not wrong statements)
+  summary questions [filter] [--all]   what the writer could not determine (asked instead of guessed)
+  summary answer <vi> <#> <text | @file>   the user's answer, kept as a note: it survives a rewritten summary and is
+                              marked "VI changed since" instead of turning stale (a text starting with - or @ goes
+                              in a file)
+  summary stats [filter]      current / stale / missing summaries and open questions per owner
+  [semantic] language = "..." in lvindex.toml: the language `summary template` asks for (default English)
 Any command: --max-tokens N cuts the output at about N tokens (whole lines) and says how much was left out.
 Markers: "(no card)" never exported, "(card stale)" VI saved after its export - card not used,
   "(not in lvclass)" file in a class folder but not a member (stray copy or dead code).
@@ -67,5 +84,7 @@ Maintenance: ackdeps <vi>... | show <vi> [--diff] | semdiff <a.xml> <b.xml> | sk
 Extensions: trust [--remove] allows the [extensions] of this lvindex.toml to run (once per project and user)
 Store: the project's cache folder (default <project root>\\.index, lvindex.toml `cache` overrides):
   index.json (keys = VI paths relative to src, export names relative to xml\\), xml\\, skeleton.json,
-  index.lock (held while index.json is modified), .gitignore (`*`, written when the folder is created).
+  semantic.json (summaries and notes, bound to the sha256 of the saved VI file, not to an export),
+  index.lock (held while index.json or semantic.json is modified), .gitignore (`*`, written when the folder is
+  created).
 """

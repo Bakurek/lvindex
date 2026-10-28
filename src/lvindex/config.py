@@ -32,6 +32,8 @@ lvindex.toml (paths relative to the file; every key optional except src):
   caller_queue = "Caller-Queue"          accessor = the queue of the actor that launched the sender
   named_queue = '(.+) Queue$'            regex on the accessor, group 1 = name of the owning actor
                                          (each key optional: without it that kind of queue stays "owner unknown")
+  [semantic]                             VI summaries written by the assistant (`lvindex summary`)
+  language = "English"                   language `summary template` asks the summaries to be written in
   [extensions.<name>]                    project-specific extension module (see EXTENSIONS.md); loaded ONLY when
   file = "my_ext.py"                     listed here, never in zero-config. Other keys = the extension's settings
 """
@@ -45,7 +47,7 @@ import tomllib
 NAME = "lvindex.toml"
 LEGACY = "vi-tools.toml"                          # name before 2026-10-18, still found (with a warning)
 KNOWN = {"name", "src", "skip", "cache", "hide", "hide_calls", "status_enum", "tags", "messages", "actors",
-         "extensions"}
+         "semantic", "extensions"}
 DEFAULT_HIDE = [r"(^|[\\/])accessors[\\/]"]
 DEFAULT_HIDE_CALLS = [r"^(Clear Errors|Simple Error Handler|General Error Handler|Error Cluster From Error Code|"
                       r"Merge Errors|Get LV Class Name)\.vi$"]
@@ -163,7 +165,10 @@ def load():
            "cache": rel(raw["cache"]) if raw.get("cache") else os.path.join(root, ".index"),
            "hide": raw.get("hide", DEFAULT_HIDE), "hide_calls": raw.get("hide_calls", DEFAULT_HIDE_CALLS),
            "status_enum": raw.get("status_enum"), "tags": raw.get("tags"), "messages": raw.get("messages"),
-           "actors": raw.get("actors"), "dir": here, "extensions": {}}
+           "actors": raw.get("actors"), "semantic": raw.get("semantic") or {}, "dir": here, "extensions": {}}
+    sem = cfg["semantic"]
+    if not isinstance(sem, dict) or not isinstance(sem.get("language", ""), str):
+        sys.exit(f'{path}: [semantic] must be a table, e.g. [semantic] language = "English"')
     for nm, sec in (raw.get("extensions") or {}).items():
         if not isinstance(sec, dict) or not sec.get("file"):
             sys.exit(f"{path}: [extensions.{nm}] needs `file` (path of the extension module)")

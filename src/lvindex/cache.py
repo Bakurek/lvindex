@@ -977,6 +977,7 @@ FLAGS = {"-s", "--all", "--frames", "--full", "--remove", "--with-callers", "--b
 def main(argv):
     from . import ext as E
     from . import query as Q
+    from . import semantic as M
     with contextlib.suppress(AttributeError, ValueError):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     def upd(p, o):
@@ -995,7 +996,7 @@ def main(argv):
             "skeleton": (lambda p, o: skeleton("--full" if o.get("--full") else ""), 0, 0),
             "repair": (lambda p, o: repair(), 0, 0), "recard": (lambda p, o: recard(), 0, 0),
             "list": (lambda p, o: listing(), 0, 0),
-            "trust": (lambda p, o: E.trust(CFG, remove=bool(o.get("--remove"))), 0, 0), **Q.COMMANDS}
+            "trust": (lambda p, o: E.trust(CFG, remove=bool(o.get("--remove"))), 0, 0), **Q.COMMANDS, **M.COMMANDS}
     if argv[1:2] != ["trust"]:                    # trust must not load (and warn about) the code it is asked about
         cmds.update(E.commands(CFG, cmds))
     if len(argv) < 2 or (argv[1] in ("-h", "--help", "help") and argv[1] not in cmds):

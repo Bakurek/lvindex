@@ -113,7 +113,8 @@ The cache lives in `<project root>\.index`. The folder gets its own `.gitignore`
 project's repository. It holds:
 - `skeleton.json`;
 - `index.json` with the cards and export metadata;
-- `xml\` with the cached exports.
+- `xml\` with the cached exports;
+- `semantic.json` with VI summaries and the user's answers, if any were written.
 
 ## Workflow for VI review
 
@@ -132,6 +133,20 @@ project's repository. It holds:
    `--backend <name>` records which exporter made the export, so a later backend change is pointed out.
 4. Read the diff and the cards, plus `card <vi> --xml <frame>` for the one case you need, instead of the whole VI.
 
+## VI summaries
+
+Cards say what a VI contains; a summary says what it does and why, in a few sentences, so a later session can decide
+which VIs to open without exporting them. The assistant writes summaries from the card and export of a VI
+(`lvindex summary template <vi>` gives the frame names and the rules, `lvindex summary set <file.json>` stores one or
+many); lvindex calls no model. It checks each summary against the card (frame names must exist, unknown names in
+backticks are warned about, the length is capped) and binds it to the saved VI file, so it is marked
+`[summary, STALE: VI changed <date>]` as soon as the VI changes, but survives a re-export of an unchanged VI.
+`card`, `ctx` and `msgs` show the summaries, `find` searches them when no fact matches. What the writer cannot
+determine from the export is stored as a question instead of a guess (`summary questions`); the user's answers
+(`summary answer`) are kept as notes. A summary is a pointer, not evidence: the card and the XML stay that.
+Whether summaries reduce the cost of answering questions is being measured; they are optional and change no other
+output when absent.
+
 If the cache gets out of step, `repair` re-adopts the exports in `xml\` that no index entry points to, and `recard`
 rebuilds all cards from the stored exports. A corrupt `index.json` is kept as `index.json.corrupt-<time>`, not
 overwritten; `repair` then restores the entries from `xml\`.
@@ -142,7 +157,8 @@ The Claude Code plugin in [plugin/](plugin) has two parts:
 - the skill [plugin/skills/lvindex/SKILL.md](plugin/skills/lvindex/SKILL.md), the usage contract for an assistant:
   index before reading a VI, callers before editing, every export into the cache. It is kept short because it is
   loaded in every session; the states of check / export / update and how to read the CARD DELTA after an edit are in
-  [review.md](plugin/skills/lvindex/review.md) next to it, read only before a review;
+  [review.md](plugin/skills/lvindex/review.md) next to it, read only before a review, and how to write VI summaries
+  in [semantic.md](plugin/skills/lvindex/semantic.md), read only before writing them;
 - a PostToolUse hook ([plugin/hooks/](plugin/hooks)): after every labview-mcp `lvai_convert_vi(s)_to_aixml` call it
   stores the exports with `lvindex update --dir` (brief output) and hands that output to Claude, so the cache grows
   with every export whether or not the assistant remembers to store it. It acts only on VIs of a project where
@@ -210,6 +226,7 @@ path of an lvindex executable or of a checkout's `lvindex.py`). Setup for Claude
 | `cache.py` | cache, check / update / semantic diff, command dispatch |
 | `manual.py` | the manual `lvindex` prints without a command |
 | `query.py` | index queries |
+| `semantic.py` | VI summaries: storage, checks against the card, stale state, `summary` commands |
 | `config.py` | project discovery and configuration |
 | `ext.py` | extension loader and API |
 | `cli.py` | command line entry point (`lvindex`, `python -m lvindex`, `lvindex.py`) |

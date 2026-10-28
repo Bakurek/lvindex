@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **VI summaries**: `summary template / set / questions / answer / stats`. The assistant writes a short summary of a
+  VI (purpose, behavior, one line per handler frame, open questions) from its card and export; lvindex checks it
+  against the card, binds it to the saved VI file (stale when the VI changes, kept across re-exports and `recard`),
+  stores it in `semantic.json` in the cache and shows it in `card`, `ctx` and `msgs`; `find` searches it when no fact
+  matches. Questions the writer could not answer from the export are kept for the user; answers become notes.
+  `[semantic] language` in lvindex.toml. Without summaries every output is unchanged. The skill has a new
+  `semantic.md`, read before writing summaries.
 - The skill is split: SKILL.md (about 3 KB, loaded in every session) keeps the read path, the markers and the rules;
   the check / update states and the CARD DELTA review moved to `review.md`, read before the first `check` or `update`.
 

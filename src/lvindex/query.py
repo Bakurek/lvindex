@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 from . import cache as V
 from . import cards as K
 from . import ext as E
+from . import semantic as M
 from . import skeleton as S
 
 LIMIT = 30
@@ -166,6 +167,7 @@ def find(p, o):
     term, n, t = p[0], num(o, "-n", LIMIT), p[0].lower()
     sk = V.skel()
     cm = V.card_map(sk)
+    sem = M.load()
     rows, hidden = [], 0
     for q, v in sk["vis"].items():
         c, stale = cm.get(q, (None, False))
@@ -194,6 +196,10 @@ def find(p, o):
         if call:
             items.append(f"calls: {call}")
             prio = min(prio, 2)
+        said = "" if items else M.match(sk, q, sem, t)        # by meaning: only VIs no fact matched
+        if said:
+            items.append(f"summary: {said}")
+            prio = 2
         callee_files = {x.split(":")[-1].lower() for x in v["calls"]}       # subVI labels, already under calls
         st = hits([s for s in v["strs"] if s.lower() not in callee_files
                    and not any(s.lower() in x.lower() for x in shown)], t, 3)
@@ -394,8 +400,10 @@ def card(p, o):
         return
     if V.meta(vi) != {"mtime": e["mtime"], "size": e["size"]}:
         print("WARNING: VI saved after this export - card may be stale (check + export)")
+    sem = M.load()
     if not any(k in o for k in ("--frames", "--frame", "--xml")):
-        print(K.fmt(e["card"], sk["vis"].get(q, {}).get("file", "")))
+        text = K.fmt(e["card"], sk["vis"].get(q, {}).get("file", "")).split("\n")
+        print("\n".join(text[:1] + M.head(sk, q, sem) + text[1:]))
         return
     if not os.path.exists(e.get("xml", "")):
         print("cached XML missing - export again")
@@ -433,6 +441,9 @@ def card(p, o):
                 lines.append(f"    {x}: {compact(c, 400)}")
         print(K.fmt_frame(fr, extra, hide=lambda x: hidden_call(sk, q, x))
               + (f"  [{fr['xml_chars']} ch]" if "--frame" in o else ""))
+        said = M.frame_line(sk, q, sem, fr["name"]) if q else ""
+        if said:
+            print(f"    = {said}")
         for line in lines:
             print(line)
 
@@ -466,6 +477,9 @@ def ctx(p, o):
     print(f"## {q}  {v['size'] // 1024} KB  card: {st}{V.mark(sk, q)}  [{v['file']}]")
     if family(sk, q):
         print(" " + family(sk, q))
+    sem = M.load()
+    if M.purpose(sk, q, sem):
+        print(f"  summary: {M.purpose(sk, q, sem)}")
     idx = V.load()
     fcache = {}
 
@@ -502,6 +516,12 @@ def ctx(p, o):
         callees.append(callee + (f" (runs {', '.join(sorted(x.split(':')[0] for x in rr))})" if len(rr) > 1 else ""))
     if callees or hid:
         print(f"  calls: {', '.join(callees) or '-'}{f' (+{hid} plumbing)' if hid else ''}")
+    near = [("<", x) for x in sorted({c for c, _, _ in r.get(q, [])})]
+    near += [(">", x) for x in sorted(v["calls"]) if not hidden_call(sk, q, x)]
+    said = [f"    {d} {x}: {M.purpose(sk, x, sem)}" for d, x in near if M.purpose(sk, x, sem)]
+    if said:
+        print("  summaries of direct callers (<) and callees (>):")
+        print("\n".join(said[:10]) + (f"\n    ... {len(said) - 10} more: lvindex card <vi>" if len(said) > 10 else ""))
     td = [d for d in v["deps"] if not S.class_of_dep(sk, d)]
     if td:
         print(f"  typedefs: {', '.join(td)}")
@@ -547,8 +567,9 @@ def msgs(p, o):
     cm = V.card_map(sk)
     launch = launchers(sk)
     cur = {q: c for q, (c, stale) in cm.items() if not stale}
-    handled, exported = {}, []
+    handled, exported, sem = {}, [], M.load()
     loops = [(a, f"{a}:{ENTRY}") for a in actors(sk)] or [(q, q) for q, c in cur.items() if c["handles"]]
+    loop_vi = dict(loops)
     for a, q in loops:
         c = cur.get(q)
         if c:
@@ -576,6 +597,10 @@ def msgs(p, o):
         if not sent.get(n):
             print("  sender: none among the current cards")
         print(f"  handled by: {', '.join(handled[n]) + ' (case)' if n in handled else 'no exported handler'}")
+        for a in handled.get(n, []):
+            said = M.frame_line(sk, loop_vi[a], sem, n)
+            if said:
+                print(f"    {a}: {said}")
     missing = [a for a in actors(sk) if a not in exported]
     print(f"-- handlers with a current card: {', '.join(exported) or '-'}"
           + (f"; actor entry VIs without a current card: {', '.join(missing)}" if missing else "")

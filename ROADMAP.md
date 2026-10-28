@@ -49,6 +49,14 @@
   skeleton facts of the source files between git revisions and reads git only (ls-tree, hash-object without `-w`,
   cat-file); `msgs` only with `[messages]`; extension commands only when the extension is listed and trusted.
   `--max-tokens` caps any output in whole lines.
+- **VI summaries** (semantic.py): written by the assistant, never by lvindex (no model calls in the core). Bound to the
+  sha256 of the saved VI file rather than to an export, so a re-export of an unchanged VI (also by another backend)
+  and `recard` keep them, and any change of the VI marks them stale; no cascade to callers. Checked on `set`: the VI
+  must be in the state of its cached export, frame names must be frames of the card (refused otherwise), unknown
+  backticked names and lengths only warn (on 49 summaries of a real project the 8 unknown names were wildcards, field
+  paths or names from callers; the check catches invented names, not wrong statements). Unclear points are stored as questions; the user's
+  answers are notes that never turn stale, only show "VI changed since". Kept in the cache (`semantic.json`, same
+  lock as index.json): they are derived data and can be written again.
 - **Tests**: CI runs ruff and unit tests on hand-written AIXML, synthetic type blocks and the cache commands on a
   temporary zero-config project (windows-latest). The binary
   readers are checked locally against real projects with `tests/golden.py`; those suites and their outputs stay
@@ -98,8 +106,9 @@ Ordered; each step is decided on what the previous one measured.
    there; make `[actors] entry` an explicit setting.
 5. **Publishable binary fixtures** for CI, saved in more than one LabVIEW version, so CI exercises the RSRC reader.
 6. Then, in about this order:
-   - per-VI notes (intent, invariants) that survive re-export, starting with the VI documentation the cache now
-     strips; location to be decided (versioned with the project, not in the cache);
+   - VI summaries exist (see Design decisions); next: measure whether they cut the cost per question, then a
+     reminder in the hook output, `summary todo`, owner-level summaries and `explain` (a call tree with one purpose
+     line per VI), `doc`; human notes beyond answers to questions, and the VI documentation the cache now strips;
    - lints that need no notes: a flag written and never read, a dynamically called VI, a magic constant, a
      dispatcher case with no visible reason;
    - Call By Reference / strictly-typed VI refnums matched to VIs by connector pane;
