@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Case table**: `card <vi> --cases` lists the case structures that are not handler frames, as a tree: where the
+  selector value comes from (terminal, shift register, subVI output, unbundled field, output of another case, a
+  primitive with its inputs), then one line per selector value with that branch's own calls, sends, constants,
+  flags, short strings and primitives, `(no nodes)` for an empty branch, nested cases indented below. `--frame NAME`
+  keeps those inside matching handler frames. The default card says how many such case structures a VI has.
+- Constants in frame cards: a cluster whose first field is an enum shows that field (`Abort.Reason=AppError`),
+  unless a Bundle By Name sets that field anyway; a constant used only as the type input of Variant To Data is no
+  longer listed.
 - **VI summaries**: `summary template / set / questions / answer / stats`. The assistant writes a short summary of a
   VI (purpose, behavior, one line per handler frame, open questions) from its card and export; lvindex checks it
   against the card, binds it to the saved VI file (stale when the VI changes, kept across re-exports and `recard`),

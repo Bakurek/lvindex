@@ -29,7 +29,9 @@ What it consists of:
 - **Cards**: compact facts of an exported VI, a small fraction of the AIXML export. Each card lists:
   - calls and handler frames (message cases, event cases);
   - messages sent and the queues they go to;
-  - constants and tagged literals.
+  - constants and tagged literals;
+  - on request (`card <vi> --cases`) every other case structure as a table: where the selector value comes from,
+    then per value what that branch calls, sends and sets, and which branches are empty.
 - **Review cache**: `check` tells which VIs changed since their last export. `update` prints a semantic diff
   against the cached export, so unchanged VIs never have to be read again.
 - **Queries**: `overview`, `ctx`, `callers`, `calls`, `uses`, `class`, `card`, `find`, `msgs`, `path`, and more.

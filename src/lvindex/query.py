@@ -401,12 +401,29 @@ def card(p, o):
     if V.meta(vi) != {"mtime": e["mtime"], "size": e["size"]}:
         print("WARNING: VI saved after this export - card may be stale (check + export)")
     sem = M.load()
-    if not any(k in o for k in ("--frames", "--frame", "--xml")):
+    if not any(k in o for k in ("--frames", "--frame", "--xml", "--cases")):
         text = K.fmt(e["card"], sk["vis"].get(q, {}).get("file", "")).split("\n")
-        print("\n".join(text[:1] + M.head(sk, q, sem) + text[1:]))
+        try:                                           # a hint only: a bad export must not break the card
+            n = K.cases(e["xml"], count=True) if os.path.exists(e.get("xml", "")) else 0
+        except (ET.ParseError, OSError):
+            n = 0
+        print("\n".join(text[:1] + M.head(sk, q, sem) + text[1:]
+                        + ([f"  case structures: {n} besides the handler cases (card --cases)"] if n else [])))
         return
     if not os.path.exists(e.get("xml", "")):
         print("cached XML missing - export again")
+        return
+    if "--cases" in o:
+        try:
+            cs = K.cases(e["xml"], o.get("--frame"))
+        except ET.ParseError as ex:
+            print(f"cached XML unreadable ({ex}) - export again")
+            return
+        if not cs:
+            print("no case structures besides the handler cases" + (f" in frames matching '{o['--frame']}'"
+                                                                    if "--frame" in o else ""))
+        for line in K.fmt_cases(cs, hide=lambda x: hidden_call(sk, q, x)):
+            print(line)
         return
     if "--xml" in o:
         fx = K.frame_xml(e["xml"], o["--xml"])

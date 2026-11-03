@@ -971,7 +971,7 @@ def listing():
 
 # ---------------------------------------------------------------- CLI
 FLAGS_WITH_VALUE = {"-n", "-d", "--frame", "--xml", "--backend", "--dir", "--max-tokens"}
-FLAGS = {"-s", "--all", "--frames", "--full", "--remove", "--with-callers", "--brief", "--diff"}
+FLAGS = {"-s", "--all", "--frames", "--cases", "--full", "--remove", "--with-callers", "--brief", "--diff"}
 
 
 def main(argv):

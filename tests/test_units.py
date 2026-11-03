@@ -92,6 +92,38 @@ class Cards(unittest.TestCase):
         self.assertEqual(fr["Start"]["consts"], ["timeout=100"])
         self.assertEqual(sorted(fr["Start"]["card"]["calls"]), ["Demo:Log.vi", "Demo:Start.vi"])
         self.assertIn('selector="&quot;Stop&quot;"', K.frame_xml(p, "stop")[0][2])
+        self.assertEqual(K.cases(p), [])                 # its only case structure is the dispatcher (--frames)
+
+    def test_case_table(self):
+        p = os.path.join(HERE, "data", "cases.xml")
+        self.assertEqual(K.fmt_cases(K.cases(p)), [
+            "case 1 on Unbundle By Name Abort.Reason <- terminal Runner in",
+            "  [Default] (no nodes)",
+            "  [None] calls: Demo:Abort.vi | nodes: Flush Queue",
+            "case 2 on Boolean Array To Number <- Build Array <- terminal Idx",
+            "  [0] calls: Demo:Execute.vi | -> case 3",            # through a Diagram Disable Structure
+            "  [2, 3] nodes: Unbundle By Name, Bundle By Name | -> case 4",
+            "  [Default] -> event structure",
+            "  case 3 on terminal Idx",
+            "    [1] consts: limit=5",
+            "    [Default] (no nodes)",
+            "  case 4 on Unbundle By Name Status <- terminal Idx",
+            "    [Default] (no nodes)",
+            "    [Failed] calls: Demo:Request Abort.vi | consts: Abort.Reason=AppError, Stop=true | nodes: Bundle By Name",
+            "case 5 on output of case 1  (in [Start])",              # inside a dispatcher frame (handler)
+            "  [True] calls: Demo:Go.vi",
+            "  [False] (no nodes)",
+        ])
+        self.assertEqual([c["n"] for c in K.cases(p, within="start")], [5])
+        self.assertEqual(K.cases(p, count=True), 5)
+
+    def test_cluster_enum_constants(self):
+        m = K.Model(os.path.join(HERE, "data", "cases.xml"))
+        root = K.consts(m, m.root)
+        self.assertIn("Abort.Reason=AppError", root)
+        self.assertNotIn("Abort.Reason=None", root)     # only the type input of Variant To Data
+        self.assertNotIn("Template.Reason=Operator", root)   # its Reason is set by the Bundle By Name
+        self.assertNotIn("Outer.Reason=Operator", root)      # the same, through a structure tunnel
 
 
 class InstallSource(unittest.TestCase):

@@ -1,0 +1,76 @@
+<VI _name="Demo.lvclass:Runner.vi">
+  <Control _name="Runner in" conIdx="0" outputs="value:10.value" type="ref{UDClassInst}" uid="10" uid_parent="root" value=""/>
+  <Control _name="Idx" conIdx="1" outputs="value:11.value" type="int32" uid="11" uid_parent="root" value="0"/>
+  <Node _name="Unbundle By Name" fields="Abort.Reason" inputs="input cluster:10.value" outputs="Abort.Reason:12.Abort.Reason" uid="12" uid_parent="root"/>
+  <Constant _name="Abort" outputs="value:13.value" type="cluster{uint16{None,Operator,AppError}.Reason,variant.Data}" uid="13" uid_parent="root" value="[0,]"/>
+  <Node _name="Variant To Data" inputs="Variant:11.value,type:13.value" outputs="data:14.data" uid="14" uid_parent="root"/>
+  <Constant _name="Outer" outputs="value:90.value" type="cluster{uint16{None,Operator,AppError}.Reason,variant.Data}" uid="90" uid_parent="root" value="[1,]"/>
+  <Structure _name="Case Structure" selectin="12.Abort.Reason" uid="20" uid_parent="root">
+    <Tunnel _id="In1" inputs="value:10.value" uid="21" uid_parent="20"/>
+    <CaseFrame selector="Default" selectout="" uid="22" uid_parent="20">
+      <Tunnel _id="In1" outputs="value:23.value" uid="23" uid_parent="22"/>
+    </CaseFrame>
+    <CaseFrame selector="&quot;None&quot;" selectout="" uid="24" uid_parent="20">
+      <Tunnel _id="In1" outputs="value:25.value" uid="25" uid_parent="24"/>
+      <Node _name="Flush Queue" inputs="queue:25.value" outputs="" uid="26" uid_parent="24"/>
+      <Call inputs="Runner in:25.value" outputs="" target="Demo.lvclass\3AAbort.vi" uid="27" uid_parent="24"/>
+    </CaseFrame>
+    <Tunnel _id="Out1" outputs="value:28.value" uid="28" uid_parent="20"/>
+  </Structure>
+  <Node _name="Build Array" inputs="element:11.value" outputs="output array:30.output array" uid="30" uid_parent="root"/>
+  <Node _name="Boolean Array To Number" inputs="Boolean array:30.output array" outputs="number:31.number" uid="31" uid_parent="root"/>
+  <Structure _name="Case Structure" selectin="31.number" uid="40" uid_parent="root">
+    <Tunnel _id="In9" inputs="value:90.value" uid="91" uid_parent="40"/>
+    <CaseFrame selector="0" selectout="" uid="41" uid_parent="40">
+      <Call inputs="" outputs="" target="Demo.lvclass\3AExecute.vi" uid="42" uid_parent="41"/>
+      <Structure _name="Diagram Disable Structure" uid="80" uid_parent="41">
+        <CaseFrame selector="Enabled" selectout="" uid="81" uid_parent="80">
+          <Structure _name="Case Structure" selectin="11.value" uid="82" uid_parent="81">
+            <CaseFrame selector="1" selectout="" uid="83" uid_parent="82">
+              <Constant _name="limit" outputs="value:84.value" type="int32" uid="84" uid_parent="83" value="5"/>
+            </CaseFrame>
+            <CaseFrame selector="Default" selectout="" uid="85" uid_parent="82"/>
+          </Structure>
+        </CaseFrame>
+      </Structure>
+    </CaseFrame>
+    <CaseFrame selector="2\2C 3" selectout="" uid="43" uid_parent="40">
+      <Tunnel _id="In9" outputs="value:92.value" uid="92" uid_parent="43"/>
+      <Node _name="Unbundle By Name" fields="Status" inputs="input cluster:11.value" outputs="Status:44.Status" uid="44" uid_parent="43"/>
+      <Structure _name="Case Structure" selectin="44.Status" uid="45" uid_parent="43">
+        <CaseFrame selector="Default" selectout="" uid="46" uid_parent="45"/>
+        <CaseFrame selector="&quot;Failed&quot;" selectout="" uid="47" uid_parent="45">
+          <Constant _name="Abort" outputs="value:48.value" type="cluster{uint16{None,Operator,AppError}.Reason,variant.Data}" uid="48" uid_parent="47" value="[2,]"/>
+          <Constant _name="Stop" outputs="value:49.value" type="bool" uid="49" uid_parent="47" value="true"/>
+          <Constant _name="Template" outputs="value:52.value" type="cluster{uint16{None,Operator,AppError}.Reason,variant.Data}" uid="52" uid_parent="47" value="[1,]"/>
+          <Node _name="Bundle By Name" fields="Reason" inputs="Reason:11.value,input cluster:52.value" outputs="output cluster:53.output cluster" uid="53" uid_parent="47"/>
+          <Call inputs="Abort:48.value,Stop:49.value,Other:53.output cluster" outputs="" target="Demo.lvclass\3ARequest Abort.vi" uid="50" uid_parent="47"/>
+        </CaseFrame>
+      </Structure>
+      <Node _name="Bundle By Name" fields="Reason" inputs="Reason:11.value,input cluster:92.value" outputs="output cluster:93.output cluster" uid="93" uid_parent="43"/>
+    </CaseFrame>
+    <CaseFrame selector="Default" selectout="" uid="51" uid_parent="40">
+      <Structure _name="Event Structure" uid="60" uid_parent="51">
+        <CaseFrame selector="&quot;Stop&quot;: Value Change" selectout="" uid="61" uid_parent="60">
+          <Call inputs="" outputs="" target="Demo.lvclass\3AOn Stop.vi" uid="62" uid_parent="61"/>
+        </CaseFrame>
+      </Structure>
+    </CaseFrame>
+  </Structure>
+  <Structure _name="While Loop" uid="70" uid_parent="root">
+    <Call inputs="" outputs="next:71.next" target="Demo.lvclass\3ANext State.vi" uid="71" uid_parent="70"/>
+    <Structure _name="Case Structure" selectin="71.next" uid="72" uid_parent="70">
+      <CaseFrame selector="&quot;Start&quot;" selectout="" uid="73" uid_parent="72">
+        <Structure _name="Case Structure" selectin="28.value" uid="74" uid_parent="73">
+          <CaseFrame selector="True" selectout="" uid="75" uid_parent="74">
+            <Call inputs="" outputs="" target="Demo.lvclass\3AGo.vi" uid="76" uid_parent="75"/>
+          </CaseFrame>
+          <CaseFrame selector="False" selectout="" uid="77" uid_parent="74"/>
+        </Structure>
+      </CaseFrame>
+      <CaseFrame selector="&quot;Stop&quot;" selectout="" uid="78" uid_parent="72">
+        <Call inputs="" outputs="" target="Demo.lvclass\3AHalt.vi" uid="79" uid_parent="78"/>
+      </CaseFrame>
+    </Structure>
+  </Structure>
+</VI>

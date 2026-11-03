@@ -15,6 +15,8 @@ Project parts (configure(cfg) with the lvindex.toml sections; absent section = e
            look like dispatchers (>= 2 named cases, not error / boolean, inside a loop)
   results  status_enum: enum constants containing that item, not necessarily outputs
 frames(path) -> per-handler cards for those cases and Event Structure frames (computed on demand, never stored).
+cases(path) -> every other Case Structure: selector source, per value its own calls / sends / consts / primitives,
+           nested cases listed after their frame (computed on demand, never stored).
 CARD_V changes with this file and with the configuration: older cards are rebuilt lazily by cache.py.
 """
 import hashlib
@@ -312,8 +314,20 @@ def inner_message(m, wire):
     return None
 
 
-def card_of(m, scope, top=False):
-    """Card for the subtree of scope (the whole VI when top)."""
+PRUNE = ("Case Structure", "Event Structure")
+
+
+def own(scope):
+    """scope and its subtree without nested case / event structures (those are listed on their own)."""
+    stack = [scope]
+    while stack:
+        e = stack.pop()
+        yield e
+        stack += [c for c in reversed(e) if not (c.tag == "Structure" and c.get("_name") in PRUNE)]
+
+
+def card_of(m, scope, top=False, prune=False):
+    """Card for the subtree of scope (the whole VI when top; without nested case / event structures when prune)."""
     r = m.root
     c = {"v": CARD_V, "vi": short(r.get("_name")), "in": [], "out": [], "calls": set(), "tags": {}, "sends": set(),
          "handles": [], "events": {"gen": set(), "reg": set(), "handled": []}, "results": set(), "dynamic": []}
@@ -328,7 +342,7 @@ def card_of(m, scope, top=False):
         for e in r:
             if e.tag in ("Control", "Indicator") and e.get("conIdx"):
                 c["in" if e.tag == "Control" else "out"].append(f"{e.get('_name')}:{short_type(e.get('type'))}")
-    for e in scope.iter():
+    for e in own(scope) if prune else scope.iter():
         if e.tag == "Call":
             t = target(e)
             c["calls"].add(t)
@@ -456,23 +470,51 @@ def dispatcher(m, st):
 
 
 TYPE_PORTS = {"type", "target class", "data type", "default value"}
+CLUSTER_ENUM = re.compile(r"cluster\{u?int\d+\{([^}]*)\}\.?([^,}]*)")
 
 
-def consts(m, frame):
-    """Numeric and enum constants of a frame by label (business numbers: timeouts, limits, enum choices).
-    Constants that only define a data type (Variant To Data 'type' etc.) are skipped."""
+def consumers(m, wire, depth=0):
+    """(element, port) reading a wire, looking through structure tunnels only (sinks() also looks through
+    pass-through primitives such as Bundle By Name and Variant To Data)."""
     out = []
-    for e in frame.iter("Constant"):
+    for e, port in m.cons.get(wire, []):
+        if e.tag != "Tunnel" or depth > 8:
+            out.append((e, port))
+            continue
+        nxt = [w for _, w in WIRE.findall(e.get("outputs") or "")]
+        st = m.parent.get(e)
+        if st is not None and st.tag == "Structure":
+            nxt += [w for fr in st.findall("CaseFrame") for t in fr.findall("Tunnel") if t.get("_id") == e.get("_id")
+                    for _, w in WIRE.findall(t.get("outputs") or "")]
+        out += [x for w in nxt for x in consumers(m, w, depth + 1)]
+    return out
+
+
+def consts(m, frame, prune=False):
+    """Numeric and enum constants of a frame by label (business numbers: timeouts, limits, enum choices), also the
+    first field of a cluster when it is an enum (Abort.Reason=AppError). Constants that only define a data type
+    (Variant To Data 'type' etc.) are skipped."""
+    out = []
+    for e in own(frame) if prune else frame.iter():
+        if e.tag != "Constant":
+            continue
         t, v, n = e.get("type", ""), e.get("value", ""), e.get("_name") or "const"
         sinks = [port for _, w in WIRE.findall(e.get("outputs") or "") for _, port in m.sinks(w)]
-        if sinks and all((port or "").lower() in TYPE_PORTS for port in sinks):
-            continue
-        names = enum_names(t)
+        direct = [x for _, w in WIRE.findall(e.get("outputs") or "") for x in consumers(m, w)]
+        if any(ps and all((port or "").lower() in TYPE_PORTS for port in ps) for ps in (sinks, [p for _, p in direct])):
+            continue                     # direct: sinks() looks through Variant To Data and would miss its type input
+        names, ce = enum_names(t), CLUSTER_ENUM.match(t)
         if e.get("uid") in m.undecoded:
             out.append(f"{n}={NOT_DECODED}")
         elif names:
             if v.isdigit() and int(v) < len(names):
                 out.append(f"{n}={names[int(v)]}")
+        elif ce:
+            i, items = re.match(r"\[(\d+)", v), ce.group(1).split(",")
+            over = bool(ce.group(2)) and any(c.get("_name") == "Bundle By Name" and p == "input cluster"
+                                             and ce.group(2) in (c.get("fields") or "").split(",") for c, p in direct)
+            if i and int(i.group(1)) < len(items) and not over:     # not when a bundle sets that field anyway
+                out.append(f"{n}{'.' + ce.group(2) if ce.group(2) else ''}={items[int(i.group(1))]}")
         elif re.fullmatch(r"(u?int\d+|double|single|float\d*)", t):
             out.append(f"{n}={v}")
     return list(dict.fromkeys(out))
@@ -491,8 +533,115 @@ def frame_xml(path, name):
     return [(k, n, ET.tostring(f, encoding="unicode")) for k, n, p, f in handler_frames(m) if name.lower() in n.lower()]
 
 
-def fmt_frame(fr, extra=None, hide=None):
-    """One line per handler frame; hide(callee) -> True drops plumbing calls (default: queue/error utilities)."""
+def origin(m, wire, depth=0, num=None):
+    """Where a value comes from, in a few words: a terminal, a shift register, a subVI output, a constant, the
+    output of a case structure (num: structure -> its number in `cases`), or a primitive with the origins of its
+    inputs (two levels)."""
+    e, port = m.source(wire)
+    if e is None:
+        return "unwired"
+    if e.tag == "Tunnel":                              # output tunnel: one value per frame
+        st = m.parent.get(e)
+        if st is not None and st.tag == "Structure":
+            return f"output of case {num[st]}" if st in (num or {}) else f"{st.get('_name')} output"
+    if e.tag == "Control":
+        return f"terminal {e.get('_name')}"
+    if e.tag in ("Left", "Right"):
+        return "shift register"
+    if e.tag == "CaseFrame":
+        st = m.parent.get(e)
+        return f"selector of case {num[st]}" if st in (num or {}) else "the handler case's selector"
+    if e.tag == "Constant":
+        return f"constant {e.get('_name') + '=' if e.get('_name') else ''}{e.get('value', '')}"
+    if e.tag == "Call":
+        return f"{vi_name(e)} {port}"
+    if e.tag == "Node":
+        n = e.get("_name") or "node"
+        what = f"{n} {port}" if n.startswith("Unbundle") else n
+        ins = [w for p, w in m.inputs(e) if not p.startswith("error in")]
+        if depth < 2 and ins:
+            more = f" +{len(ins) - 3}" if len(ins) > 3 else ""
+            return f"{what} <- " + " + ".join(origin(m, w, depth + 1, num) for w in ins[:3]) + more
+        return what
+    return e.get("_name") or e.tag
+
+
+def cases(path, within=None, count=False):
+    """Case structures outside the handler structures of `frames`: [{n, depth, where, source, frames: [{name, card,
+    consts, nodes, nested, empty}]}] as a tree: each structure is followed by the ones nested in its frames (depth
+    + 1, frame order). where = the handler / event frame they sit in; within = only those whose where contains this
+    text. count: only their number."""
+    m = Model(path)
+    hf = handler_frames(m)
+    hstruct = {m.parent.get(f) for k, _, _, f in hf if k == "msg"}
+    hname = {f: n for _, n, _, f in hf}
+    num = {st: 0 for st in m.root.iter("Structure") if st.get("_name") == "Case Structure" and st not in hstruct}
+    if count:
+        return len(num)
+
+    def outer(x):
+        """(nearest enclosing CaseFrame of a listed case structure or None, handler frame name or None)"""
+        frame, p = None, m.parent.get(x)
+        while p is not None:
+            if p.tag == "CaseFrame":
+                if p in hname:
+                    return frame, hname[p]
+                if frame is None and m.parent.get(p) in num:
+                    frame = p
+            p = m.parent.get(p)
+        return frame, None
+
+    info = {st: outer(st) for st in num}
+    kids, other = {}, {}           # frame -> listed cases in it (same rule as outer); -> other pruned structures
+    for st in num:
+        if info[st][0] is not None:
+            kids.setdefault(info[st][0], []).append(st)
+    for st in m.root.iter("Structure"):
+        if st.get("_name") in PRUNE and st not in num:
+            p = m.parent.get(st)
+            while p is not None and p.tag != "CaseFrame":
+                p = m.parent.get(p)
+            if p is not None:
+                other.setdefault(p, []).append(st)
+    order = []
+
+    def walk(st, depth):
+        order.append((st, depth))
+        num[st] = len(order)
+        for f in st.findall("CaseFrame"):
+            for x in kids.get(f, []):
+                walk(x, depth + 1)
+
+    for st in num:
+        if info[st][0] is None:
+            walk(st, 0)
+    out = []
+    for st, depth in order:
+        where = info[st][1]
+        if within and within.lower() not in (where or "").lower():
+            continue
+        frs = []
+        for f in st.findall("CaseFrame"):
+            body = [e for e in own(f) if e is not f and e.tag != "Tunnel"]
+            nested = [f"case {num[x]}" for x in kids.get(f, [])] + [
+                "event structure" if x.get("_name") == "Event Structure" else "handler cases (--frames)"
+                for x in other.get(f, [])]
+            card = card_of(m, f, prune=True)
+            sent = {s.split(" -> ")[0].split("[")[0] for s in card["sends"]}
+            extra = [f"{e.get('_name') or 'const'}={e.get('value')}" for e in body if e.tag == "Constant" and (
+                     e.get("type") == "bool" or (e.get("type") == "string" and 0 < len(e.get("value") or "") <= 40
+                                                 and e.get("value") not in sent))]   # flags and short strings
+            frs.append({"name": unesc(f.get("selector")), "card": card,
+                        "consts": consts(m, f, prune=True) + extra, "nested": nested, "empty": not body and not nested,
+                        "nodes": list(dict.fromkeys(e.get("_name") for e in body if e.tag == "Node"))})
+        src = origin(m, st.get("selectin"), num=num)
+        out.append({"n": num[st], "depth": depth, "where": where, "frames": frs,
+                    "source": src if len(src) <= 160 else src[:157] + "..."})
+    return out
+
+
+def frame_parts(fr, extra=None, hide=None):
+    """The facts of a frame card as 'calls: ...' parts; hide(callee) -> True drops plumbing calls."""
     c = fr["card"]
     parts = []
     calls = [x for x in c["calls"] if not NOISE_CALL.search(x) and not (hide and hide(x))]
@@ -509,8 +658,34 @@ def fmt_frame(fr, extra=None, hide=None):
         parts.append("consts: " + ", ".join(fr["consts"][:8]) + (f" +{len(fr['consts']) - 8}" if len(fr["consts"]) > 8 else ""))
     if c["dynamic"]:
         parts.append("dynamic: " + ", ".join(c["dynamic"]))
+    return parts
+
+
+def fmt_frame(fr, extra=None, hide=None):
+    """One line per handler frame; hide(callee) -> True drops plumbing calls (default: queue/error utilities)."""
+    parts = frame_parts(fr, extra, hide)
     head = f"[{fr['name']}]" + (f" (in {fr['parent']})" if fr["parent"] else "") + (" event" if fr["kind"] == "event" else "")
     return f"{head} " + (" | ".join(parts) or "-")
+
+
+def fmt_cases(cs, hide=None):
+    """Lines of `card --cases`: per case structure its selector source, then one line per selector value."""
+    lines = []
+    for c in cs:
+        ind = "  " * c["depth"]
+        lines.append(f"{ind}case {c['n']} on {c['source']}" + (f"  (in [{c['where']}])" if c["where"] else ""))
+        for fr in c["frames"]:
+            parts = frame_parts(fr, hide=hide)
+            if fr["nodes"]:
+                parts.append("nodes: " + ", ".join(fr["nodes"][:6]) + (f" +{len(fr['nodes']) - 6}"
+                                                                       if len(fr["nodes"]) > 6 else ""))
+            if fr["nested"]:
+                parts.append("-> " + ", ".join(fr["nested"]))
+            if not parts and fr["card"]["calls"]:      # only calls hidden as plumbing: better than "-"
+                parts.append("calls (plumbing): " + ", ".join(fr["card"]["calls"]))
+            text = " | ".join(parts) or ("(no nodes)" if fr["empty"] else "-")
+            lines.append(f"{ind}  [{fr['name']}] {text}")
+    return lines
 
 
 def fmt(c, rel=""):

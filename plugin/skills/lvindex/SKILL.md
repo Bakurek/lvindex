@@ -18,7 +18,7 @@ guesses - say so when you pass them on.
 1. `card <vi>`: terminals, calls, messages sent, handled cases, events.
 2. `ctx <vi>`: who reaches it from the entry points, through which handler frames, and what it uses.
 3. `card <vi> --frames`, then `--frame NAME` (one handler with its callee cards) or `--xml NAME` (the XML of the
-   matching frames only).
+   matching frames only). Branch logic (which value does what, empty branches): `card <vi> --cases`.
 4. Export a VI only for what these cannot answer.
 
 `card`, `ctx` and `msgs` may show a `summary` line written by an earlier session: use it to decide what to read, never
@@ -42,6 +42,8 @@ from `callers`, `find` or `unexported` as complete for them.
 - Export only the VIs the task needs, never a whole project unless the user asks, with labview-mcp
   `lvai_convert_vis_to_aixml` (refresh=true) to files in a fresh scratch folder; never `returnContent`, never print an
   export into the context.
+- Do not pass `backend` unless asked: the server picks grpc when it can, and it gives the better card. If the answer
+  says `pylabview`, cards may have undecoded constants: say so before relying on a value.
 - With the lvindex plugin a hook stores each export: a message starting with `lvindex hook:` follows; if it says
   "NOT stored cleanly", read `review.md` before using those cards. Without it run
   `update --dir <folder> --backend <name>` (`<name>` = the backend the export tool answered).

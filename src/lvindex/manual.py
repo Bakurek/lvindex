@@ -37,10 +37,13 @@ Understanding the program (skeleton = all VIs from the binary files, no export; 
                         layers, coverage
   ctx <vi>              usage context: call chains from the roots, handler frames on the way, callees, typedefs,
                         tagged literals, card state
-  card <vi> [--frames | --frame NAME | --xml NAME]   card of an exported VI; per-handler cards (message cases or
-                        dispatcher cases + Event Structure frames, callee card state); --frame also prints the callee
-                        cards (one hop); --xml = XML of that frame only (or of any case whose selector matches).
-                        Nested cases are flattened into the frame
+  card <vi> [--frames | --frame NAME | --xml NAME | --cases]   card of an exported VI; per-handler cards (message
+                        cases or dispatcher cases + Event Structure frames, callee card state); --frame also prints the
+                        callee cards (one hop); --xml = XML of that frame only (or of any case whose selector matches).
+                        Nested cases are flattened into the frame; --cases lists every other case structure: where its
+                        selector comes from, then per value its own calls / sends / constants / primitives, "(no
+                        nodes)" for an empty branch, nested cases indented below (with --frame NAME: only those inside
+                        matching handler frames)
   find <term> [-s] [-n N]   matched items: tagged literals (role from the card, "sym?" = role unknown), messages
                         and events (cards), calls, extension hits; -s also VIs that match only by a string
   callers <vi> [-n N]   dispatch expanded: DyOM on a wire of class W runs W's nearest implementation or an override
